@@ -34,7 +34,7 @@ flowchart TD
     B -- yes --> C[TTS interrupt if playing]
     C --> D[LLM reply]
     D --> E[Stream reply audio]
-    E --> F[Log to transcript.txt]
+    E --> F[Log turn to console]
 ```
 
 ## Requirements
@@ -58,7 +58,7 @@ uv run voice-agent      # or: .venv/bin/voice-agent
 uv run python -m voice_agent.main
 ```
 
-Speak into your mic. Press `Ctrl+C` to stop. A running transcript is appended to `transcript.txt`.
+On startup the agent speaks a hardcoded greeting, then opens the mic and starts listening. Speak into your mic. Press `Ctrl+C` to stop. Each turn is logged to the console as `user: ...` and `Assistant: ...`.
 
 ## Configuration
 

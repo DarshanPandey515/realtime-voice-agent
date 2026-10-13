@@ -20,6 +20,19 @@ READONLY_GIT_SUBCOMMANDS = {
     "ls-files", "rev-parse", "cat-file", "annotate", "branch",
 }
 
+# Naming the flags we allow beats naming the ones we block: a denylist has to
+# anticipate every write/exec vector and misses the next one. `--exec-path`
+# repoints where git looks for its own helper programs and `--ext-diff` runs an
+# external diff driver, so both bite even after a valid read-only subcommand.
+READONLY_GIT_FLAGS = {
+    "--oneline", "--stat", "--shortstat", "--numstat", "--graph", "--decorate",
+    "-p", "--patch", "--name-only", "--name-status", "--no-patch",
+    "--all", "--reverse", "--follow", "--no-color", "--color", "-n",
+    "--max-count", "--author", "--committer", "--since", "--after",
+    "--until", "--before", "--grep", "-i", "--ignore-case", "-S",
+    "--date", "--abbrev-commit", "--no-abbrev-commit", "--short",
+}
+
 # `find` takes a command to run or a list of things to erase. These flags are
 # the whole attack surface.
 UNSAFE_FIND_FLAGS = (
@@ -57,8 +70,14 @@ def _rejection_reason(base_cmd: str, args: list[str]) -> str | None:
                 f"'git {sub}' isn't read-only. I can only run git "
                 f"{', '.join(sorted(READONLY_GIT_SUBCOMMANDS))}."
             )
-        if any(a == "--output" or a.startswith("--output=") for a in rest):
-            return "'git --output' writes to a file, so I won't run it."
+        for arg in rest[1:]:
+            # git accepts --flag and --flag=value, so compare the name only.
+            # A bare -5 is "last 5 commits"; anything else starting with - has
+            # to be on the allowlist.
+            name = arg.split("=", 1)[0]
+            if arg.startswith("-") and name not in READONLY_GIT_FLAGS \
+                    and not arg[1:].isdigit():
+                return f"'git {arg}' isn't on my read-only list, so I won't run it."
 
     if base_cmd == "find":
         for arg in rest:

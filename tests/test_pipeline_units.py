@@ -17,7 +17,12 @@ from voice_agent.tools import BashTool, MAX_CONTENT, _rejection_reason
     ("rm -rf /", "isn't allowed"),
     ("git push --force origin main", "isn't read-only"),
     ("git config --global user.email x@y.z", "isn't read-only"),
-    ("git log --output=/tmp/leak", "writes to a file"),
+    ("git log --output=/tmp/leak", "read-only list"),
+    ("git log --exec-path=/tmp/evil", "read-only list"),
+    ("git log --ext-diff -p", "read-only list"),
+    ("git log -c core.pager=id", "read-only list"),
+    ("git log --upload-pack='sh -c id'", "read-only list"),
+    ("git log --no-pager --output=/tmp/x", "read-only list"),
     ("find . -delete", "delete files"),
     ("find . -exec rm {} ;", "delete files"),
     ("find . -execdir sh -c 'id' ;", "delete files"),
@@ -31,12 +36,17 @@ def test_rejects_dangerous_commands(command, fragment):
 @pytest.mark.parametrize("command", [
     "git status",
     "git log --oneline -5",
+    "git log -n 5",
+    "git log -5 --stat",
+    "git log --since=2.weeks --author=someone",
+    "git diff --name-only",
     "find . -name '*.py'",
     "ls -la",
     "pwd",
 ])
 def test_allows_readonly_commands(command):
-    reason = _rejection_reason(command.split()[0], command.split())
+    args = command.split()
+    reason = _rejection_reason(args[0], args)
     assert reason is None, f"{command!r} should be allowed, got {reason!r}"
 
 

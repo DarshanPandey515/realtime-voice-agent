@@ -115,7 +115,13 @@ sound read-only while it was not:
   family, which can run commands or erase files.
 - Output is read up to a 1500-byte cap and the subprocess is killed at the cap, so a
   runaway `find` cannot exhaust memory or wedge the turn. Per-command timeouts apply
-  (`find` 15 s, `grep`/`git` 10 s, otherwise 5 s).
+  (`find` 15 s, `grep`/`git` 10 s, otherwise 5 s); on timeout the partial output so far
+  is returned with "still running", because fifteen seconds of silence is
+  indistinguishable from a crash.
+- For `git`, only read-only subcommands are allowed *and* only the flags on an explicit
+  allowlist. Blocking known-bad flags is a losing game: `--exec-path` repoints where git
+  looks for its own helper programs and `--ext-diff` runs an external diff driver, both
+  of which bite even after a valid subcommand.
 
 Earlier versions also defined `WriteFileTool` and `EditFileTool`. They were never
 registered and `EditFileTool` would have been an unsandboxed arbitrary-file-write, so

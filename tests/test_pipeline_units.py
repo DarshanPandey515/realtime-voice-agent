@@ -50,9 +50,74 @@ def test_allows_readonly_commands(command):
     assert reason is None, f"{command!r} should be allowed, got {reason!r}"
 
 
-def test_runs_and_truncates_output():
+def test_runs_a_command_for_real():
+    """Baseline: the happy path still shells out and returns output."""
     out = asyncio.run(BashTool.execute_command("echo hello"))
     assert "hello" in out
+
+
+class _HangingReader:
+    """Emits a few chunks, then blocks forever (so wait_for fires)."""
+
+    def __init__(self, chunks):
+        self._chunks = list(chunks)
+
+    async def read(self, n):
+        if self._chunks:
+            return self._chunks.pop(0)
+        await asyncio.sleep(3600)
+
+
+class _FakeProc:
+    def __init__(self, stdout_chunks, stderr_chunks=()):
+        self.stdout = _HangingReader(stdout_chunks)
+        self.stderr = _DrainingReader(stderr_chunks)
+        self.returncode = 0
+        self.killed = False
+
+    def kill(self):
+        self.killed = True
+
+    async def wait(self):
+        return 0
+
+
+class _DrainingReader:
+    def __init__(self, chunks):
+        self._chunks = list(chunks)
+
+    async def read(self, n):
+        return self._chunks.pop(0) if self._chunks else b""
+
+
+def test_timeout_returns_partial_output(monkeypatch):
+    """A silent stall reads as a crash, so partial output must come back."""
+    import voice_agent.tools as tools
+
+    async def fake_exec(*args, **kwargs):
+        return _FakeProc([b"first chunk\n", b"second chunk\n"])
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(tools, "COMMAND_TIMEOUTS", {"find": 0.05})
+
+    out = asyncio.run(BashTool.execute_command("find . -name x"))
+    assert "first chunk" in out
+    assert "second chunk" in out
+    assert "still running" in out
+
+
+def test_timeout_with_no_output_says_so(monkeypatch):
+    import voice_agent.tools as tools
+
+    async def fake_exec(*args, **kwargs):
+        return _FakeProc([])
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(tools, "COMMAND_TIMEOUTS", {"find": 0.05})
+
+    out = asyncio.run(BashTool.execute_command("find . -name x"))
+    assert "(no output yet)" in out
+    assert "still running" in out
 
 
 def test_overlong_output_is_truncated_not_reported_as_failure():

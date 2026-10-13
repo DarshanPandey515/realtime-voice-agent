@@ -90,18 +90,18 @@ def _rejection_reason(base_cmd: str, args: list[str]) -> str | None:
     return None
 
 
-async def _read_capped(stream: asyncio.StreamReader, limit: int) -> tuple[bytes, bool]:
-    """Read at most `limit` bytes. Returns (data, hit_limit).
+async def _read_capped(stream: asyncio.StreamReader, buf: bytearray, limit: int) -> bool:
+    """Read into `buf` up to `limit` bytes total. Returns True if capped.
 
-    Stops reading instead of buffering a runaway command's whole output.
+    Writes into a caller-owned buffer so whatever arrived before a timeout
+    survives the caller throwing it away.
     """
-    buf = bytearray()
     while len(buf) < limit:
         chunk = await stream.read(min(8192, limit - len(buf)))
         if not chunk:
-            return bytes(buf), False
+            return False
         buf += chunk
-    return bytes(buf), True
+    return True
 
 
 class BashTool:
@@ -133,30 +133,44 @@ class BashTool:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
+            stdout = bytearray()
+            stderr = bytearray()
+            capped = False
+            timed_out = False
             try:
-                stdout, capped = await asyncio.wait_for(
-                    _read_capped(proc.stdout, MAX_CONTENT), timeout=timeout
+                capped = await asyncio.wait_for(
+                    _read_capped(proc.stdout, stdout, MAX_CONTENT), timeout=timeout
                 )
                 if capped:
                     proc.kill()
-                stderr, _ = await asyncio.wait_for(
-                    _read_capped(proc.stderr, MAX_CONTENT), timeout=1.0
+                await asyncio.wait_for(
+                    _read_capped(proc.stderr, stderr, MAX_CONTENT), timeout=1.0
                 )
                 await proc.wait()
             except asyncio.TimeoutError:
+                timed_out = True
                 proc.kill()
                 await proc.wait()
-                return f"'{base_cmd}' timed out after {timeout}s."
+
+            # Fifteen seconds of silence is indistinguishable from a crash, so
+            # hand back whatever arrived instead of nothing at all.
+            if timed_out:
+                out = bytes(stdout).decode(errors="replace").strip()
+                return (
+                    (out or "(no output yet)")
+                    + f"... [{base_cmd} still running after {timeout}s, "
+                      "stopped waiting]"
+                )
 
             # A command we stopped for overrunning the cap exits on SIGKILL, so
             # `capped` has to win over the return code or truncated-but-usable
             # output gets reported as a failure.
             if capped or proc.returncode == 0:
-                out = stdout.decode(errors="replace").strip() or "(no output)"
+                out = bytes(stdout).decode(errors="replace").strip() or "(no output)"
                 if capped:
                     out += f"... [truncated at {MAX_CONTENT} bytes]"
                 return out
-            err = stderr.decode(errors="replace").strip()
+            err = bytes(stderr).decode(errors="replace").strip()
             return f"Command failed: {err[:MAX_CONTENT]}" if err else \
                 "Command failed and printed nothing (no matches, or a bad flag)."
 

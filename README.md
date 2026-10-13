@@ -145,11 +145,15 @@ upper bound: the real pipeline now overlaps stages, and a sum cannot show that.
 
 Two honest caveats about where the remaining time goes:
 
-- **Streaming the LLM into TTS does not buy much here.** The whole reply arrives from
-  Groq as a single delta, so the first sentence is available essentially when the last
-  one is. It helps on long replies and costs nothing, but it is not the multi-second win
-  one might expect. The dominant term is model TTFT, which sentence-level streaming
-  cannot touch.
+- **Sentence streaming buys little here, for a specific reason.** Groq does stream
+  incrementally — a longer prompt produced 185 separate text deltas — so this is not a
+  wrapper hiding the stream. The cost is that `gpt-oss-20b` is a *reasoning* model: it
+  emits 40–90 reasoning tokens before any speakable text, and `stream_text` correctly
+  withholds reasoning from the text stream. For the 1–3 sentence replies this agent's
+  system prompt asks for, the visible answer is ~8 tokens arriving right after the
+  reasoning ends, so there is no interval left to chunk. Switching to a non-reasoning
+  model would put text on the wire immediately and is the lever worth pulling if first
+  audio ever matters more than answer quality.
 - **The concurrency fixes do not show up in these numbers at all**, because the harness
   sums stages instead of running them together. What they buy is barge-in: the agent can
   now be interrupted mid-sentence instead of finishing first.

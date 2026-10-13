@@ -24,8 +24,11 @@ class LLMConfig:
 class TTSConfig:
     voice_id: str = "JBFqnCBsd6RMkjVDRZzb"
     model_id: str = "eleven_flash_v2_5"
-    output_format: str = "pcm_22050"
-    sample_rate: int = 22050
+    # 16 kHz, not 22.05 kHz: echo cancellation needs the far-end reference at
+    # the same rate as the mic (16 kHz), and matching them in config beats
+    # resampling the reference on every chunk.
+    output_format: str = "pcm_16000"
+    sample_rate: int = 16000
     api_key: str = os.getenv("ELEVENLABS_API_KEY")
 
 

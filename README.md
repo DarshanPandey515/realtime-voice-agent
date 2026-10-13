@@ -21,7 +21,8 @@ flowchart LR
 | `main.py`  | Orchestrator — mic thread, turn loop, responder loop, wiring |
 | `asr.py`   | Async streaming ASR over WebSocket, bounded turn queue, connect timeout |
 | `llm.py`   | Agent with system prompt, tools, turn-based history, sentence streaming |
-| `tts.py`   | Streaming TTS played off the event loop, interrupt (barge-in) support |
+| `tts.py`   | Streaming TTS played off the event loop, interrupt (barge-in) support, tee to AEC |
+| `aec.py`   | Echo cancellation — subtracts the agent's own voice from the mic |
 | `tools.py` | Tool implementations: bash allowlist, read file, project tree |
 | `config.py`| Model ids, voice id, sample rates, API keys      |
 
@@ -50,8 +51,11 @@ the barge-in path. The latency suite needs keys and, for a real ASR turn number,
 ## Known limits
 
 - Single turn queue and single response at a time — no overlap between turns.
-- No echo cancellation, so the mic hears the agent's own speaker. Barge-in is
-  turn-based, so the agent finishes your sentence before it can be cut off mid-word.
+- Barge-in is turn-based, so the agent finishes your sentence before it can be cut off
+  mid-word. Echo cancellation stops it hearing itself, but it still cannot notice you
+  until your turn closes.
+- AEC convergence is fastest with a steady far-end reference, so the first moment after
+  the agent starts speaking is the leakiest.
 - `find`/`grep` can stall a turn silently for up to 15 s; nothing tells the user it is
   waiting.
 - Tool calls can push a turn to tens of seconds, far past anything the latency table
@@ -91,9 +95,12 @@ All model ids, the voice id, sample rates, and API keys live in `src/voice_agent
 |-----------|---------|
 | ASR | `universal-3-5-pro`, 16 kHz mic input |
 | LLM | `groq:openai/gpt-oss-20b` |
-| TTS | `eleven_flash_v2_5`, PCM 22.05 kHz output |
+| TTS | `eleven_flash_v2_5`, PCM 16 kHz output |
 
-TTS uses raw PCM (`pcm_22050`) so audio streams straight to PyAudio without decoding.
+TTS uses raw PCM (`pcm_16000`) so audio streams straight to PyAudio without decoding.
+The sample rate is deliberately the mic's 16 kHz rather than something higher: echo
+cancellation needs the far-end reference at the capture rate, and matching them in config
+beats resampling the reference on every audio chunk.
 
 ## Tools
 

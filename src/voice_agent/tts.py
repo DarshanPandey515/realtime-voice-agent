@@ -10,12 +10,13 @@ load_dotenv()
 
 class StreamingTTS:
 
-    def __init__(self):
+    def __init__(self, echo=None):
         self.client = ElevenLabs(
             api_key=tts_config.api_key
         )
         # Set from any thread (including a turn callback) to cut playback short.
         self._cancel = threading.Event()
+        self._echo = echo
 
 
     async def speak(self, text: str) -> None:
@@ -47,6 +48,10 @@ class StreamingTTS:
                 if self._cancel.is_set():
                     break
                 stream.write(chunk)
+                # Tee to the echo canceller: this is the far-end reference that
+                # lets it subtract the agent's own voice from the mic.
+                if self._echo is not None:
+                    self._echo.add_playback(chunk)
         finally:
             if stream is not None:
                 stream.stop_stream()

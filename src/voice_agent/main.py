@@ -4,6 +4,7 @@ import threading
 
 import pyaudio
 
+from voice_agent.aec import EchoCancellation
 from voice_agent.asr import StreamingASR
 from voice_agent.config import asr_config
 from voice_agent.llm import LLMAgent
@@ -17,9 +18,10 @@ logger = logging.getLogger(__name__)
 class VoiceAgent:
 
     def __init__(self):
+        self.echo = EchoCancellation(asr_config.sample_rate)
         self.asr = StreamingASR()
         self.llm = LLMAgent()
-        self.tts = StreamingTTS()
+        self.tts = StreamingTTS(echo=self.echo)
         self.is_running = False
         self._mic_error = None
         # Mic thread -> event loop. The pump drains this in the loop thread,
@@ -62,7 +64,10 @@ class VoiceAgent:
 
     async def _pump_audio(self) -> None:
         while self.is_running:
-            await self.asr.stream_audio(await self._frames.get())
+            frame = await self._frames.get()
+            # Strip the agent's own voice before ASR ever sees it, otherwise it
+            # transcribes itself and interrupts itself.
+            await self.asr.stream_audio(self.echo.process(frame))
 
     async def _turn_loop(self) -> None:
         """Take finished turns and hand them to the responder.

@@ -6,8 +6,10 @@ pairing in conversation history, and sentence splitting.
 
 import asyncio
 
+import numpy as np
 import pytest
 
+from voice_agent.aec import EchoCancellation
 from voice_agent.tools import BashTool, MAX_CONTENT, _rejection_reason
 
 
@@ -294,6 +296,170 @@ def test_generate_response_joins_sentences():
 
     out = asyncio.run(llm.generate_response("hi"))
     assert out == "Hello there. Second part."
+
+
+# ------------------------------------------------------------------ echo
+
+def _rms(x):
+    a = np.frombuffer(x, dtype=np.int16).astype(np.float64)
+    return float(np.sqrt((a ** 2).mean()))
+
+
+def _speech_like(chunks=5, samples=800, seed=0, scale=6000):
+    rng = np.random.default_rng(seed)
+    out = []
+    for _ in range(chunks):
+        a = rng.normal(0, scale, samples).astype(np.int16)
+        out.append(a.tobytes())
+    return out
+
+
+def test_echo_canceller_removes_the_agents_own_voice():
+    """Feeding a signal as both capture and reference must suppress it hard."""
+    aec = EchoCancellation(sample_rate=16000)
+    pcm = _speech_like(chunks=1)[0]
+    aec.add_playback(pcm)                       # it is "playing" into the room
+    cleaned = aec.process(pcm)                  # mic hears exactly that
+
+    assert len(cleaned) == len(pcm)
+    assert _rms(cleaned) < _rms(pcm) / 10, f"only {_rms(cleaned):.0f} vs {_rms(pcm):.0f}"
+
+
+def test_echo_canceller_leaves_speech_alone_when_nothing_is_playing():
+    """A silent reference must pass speech through, not eat it."""
+    aec = EchoCancellation(sample_rate=16000)
+    for pcm in _speech_like(chunks=6):
+        cleaned = aec.process(pcm)
+        assert abs(_rms(cleaned) - _rms(pcm)) < _rms(pcm) * 0.25
+
+
+def test_echo_canceller_pads_when_playback_runs_dry():
+    aec = EchoCancellation(sample_rate=16000)
+    cleaned = aec.process(_speech_like(chunks=1)[0])
+    assert len(cleaned) == 800 * 2
+
+
+def test_echo_reference_buffer_does_not_grow_without_bound():
+    aec = EchoCancellation(sample_rate=16000, reference_ms=100)
+    for _ in range(50):
+        aec.add_playback(_speech_like(chunks=1)[0])
+    assert len(aec._reference) <= aec._capacity
+
+
+def test_echo_canceller_survives_odd_sized_chunks():
+    """Mic buffers are not guaranteed to be a whole number of 10 ms frames."""
+    aec = EchoCancellation(sample_rate=16000)
+    for n in (333, 160, 801):
+        pcm = np.zeros(n, dtype=np.int16).tobytes()
+        aec.add_playback(pcm)
+        assert len(aec.process(pcm)) == n * 2
+
+
+def test_echo_canceller_reset_clears_history():
+    aec = EchoCancellation(sample_rate=16000)
+    aec.add_playback(_speech_like(chunks=1)[0])
+    aec.reset()
+    assert len(aec._reference) == 0
+
+
+def test_tts_tees_playback_into_the_echo_canceller(monkeypatch):
+    """Without the tee AEC has no far-end reference and does nothing."""
+    import threading
+    from types import SimpleNamespace
+
+    import voice_agent.tts as tts_mod
+    from voice_agent.tts import StreamingTTS
+
+    teed = []
+
+    class _Echo:
+        def add_playback(self, pcm):
+            teed.append(pcm)
+
+    class _Out:
+        def __init__(self):
+            self.written = []
+
+        def write(self, chunk):
+            self.written.append(chunk)
+
+        def stop_stream(self):
+            pass
+
+        def close(self):
+            pass
+
+    out = _Out()
+
+    class _FakePa:
+        def __init__(self):
+            pass
+
+        def open(self, **kwargs):
+            return out
+
+        def terminate(self):
+            pass
+
+    tts = StreamingTTS.__new__(StreamingTTS)
+    tts.client = SimpleNamespace(
+        text_to_speech=SimpleNamespace(stream=lambda **kw: iter([b"c1", b"c2"]))
+    )
+    tts._cancel = threading.Event()
+    tts._echo = _Echo()
+
+    monkeypatch.setattr(tts_mod.pyaudio, "PyAudio", _FakePa)
+
+    tts._play_blocking("hello")
+
+    assert out.written == [b"c1", b"c2"]
+    assert teed == [b"c1", b"c2"], "playback must be teed to the echo canceller"
+
+
+def test_tts_interrupt_stops_playback_before_the_last_chunk(monkeypatch):
+    """Barge-in depends on the cancel flag being checked between chunks."""
+    import threading
+    from types import SimpleNamespace
+
+    import voice_agent.tts as tts_mod
+    from voice_agent.tts import StreamingTTS
+
+    class _Out:
+        def __init__(self):
+            self.written = []
+
+        def write(self, chunk):
+            self.written.append(chunk)
+
+        def stop_stream(self):
+            pass
+
+        def close(self):
+            pass
+
+    out = _Out()
+
+    class _FakePa:
+        def open(self, **kwargs):
+            return out
+
+        def terminate(self):
+            pass
+
+    tts = StreamingTTS.__new__(StreamingTTS)
+    tts.client = SimpleNamespace(
+        text_to_speech=SimpleNamespace(
+            stream=lambda **kw: iter([b"c1", b"c2", b"c3"])
+        )
+    )
+    tts._cancel = threading.Event()
+    tts._echo = None
+    monkeypatch.setattr(tts_mod.pyaudio, "PyAudio", _FakePa)
+
+    tts.interrupt()
+    tts._play_blocking("hello")
+
+    assert out.written == [], f"cancelled playback wrote {out.written}"
 
 
 # ------------------------------------------------------------------ orchestration

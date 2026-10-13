@@ -141,10 +141,10 @@ Reproduce with `ASR_AUDIO_FILE=tests/sample.wav uv run pytest tests/test_latency
 
 | Stage | This pipeline | Industry 2026 | Verdict |
 |-------|---------------|---------------|---------|
-| ASR turn (end of speech → transcript) | ~764 ms | Deepgram Nova-3 ~150 ms, AssemblyAI ~200 ms | Behind, but this is a real paced measurement — the old ~3.8 s figure was an artifact of firing the whole clip at once |
-| LLM time-to-first-token (Groq `gpt-oss-20b`) | ~496 ms p50 | Groq typically sub-200–300 ms for short outputs | Likely network RTT plus reasoning-token overhead; `gpt-oss-20b` thinks before it answers |
-| TTS first audio chunk (ElevenLabs Flash) | ~254 ms p50 | 100–250 ms standard; premium neural voices 250–500 ms | Healthy, mid-pack |
-| End-to-end (end of speech → audio) | ~1.5 s serial sum | Vapi ~720 ms p50/1050 ms p95, Retell ~680/920 ms, Bland ~850/1180 ms, Twilio ConversationRelay ~491/713 ms | Behind the fastest cascaded platforms |
+| ASR turn (end of speech → transcript) | ~815 ms | Deepgram Nova-3 ~150 ms, AssemblyAI ~200 ms | Behind, but this is a real paced measurement — the old ~3.8 s figure was an artifact of firing the whole clip at once |
+| LLM time-to-first-token (Groq `gpt-oss-20b`) | ~798 ms p50 | Groq typically sub-200–300 ms for short outputs | Reasoning-token overhead dominates; `gpt-oss-20b` thinks before it answers. Run-to-run spread is large (428–1539 ms) |
+| TTS first audio chunk (ElevenLabs Flash) | ~227 ms p50 | 100–250 ms standard; premium neural voices 250–500 ms | Healthy, mid-pack |
+| End-to-end (end of speech → audio) | ~1.9 s serial sum | Vapi ~720 ms p50/1050 ms p95, Retell ~680/920 ms, Bland ~850/1180 ms, Twilio ConversationRelay ~491/713 ms | Behind the fastest cascaded platforms |
 
 The end-to-end figure is a **serial sum of separately measured stages**, not a live
 speech-to-speech measurement — there is no mic or speaker in the harness. It is also an

@@ -3,10 +3,9 @@ import asyncio
 import shlex
 from pathlib import Path
 
-MAX_CONTENT = 1500          
-COMMAND_TIMEOUT = 10         
+MAX_CONTENT = 1500
 TREE_MAX_ENTRIES = 200
-
+DEFAULT_TIMEOUT = 5
 
 
 ALLOWED_COMMANDS = {
@@ -14,11 +13,76 @@ ALLOWED_COMMANDS = {
     "git", "wc", "echo", "date", "whoami", "df", "du",
 }
 
+# `git <anything>` is not read-only: `git push`, `git config --global` and
+# `git log --output=file` all write. Pin it to subcommands that only read.
+READONLY_GIT_SUBCOMMANDS = {
+    "status", "log", "diff", "show", "blame", "describe", "shortlog",
+    "ls-files", "rev-parse", "cat-file", "annotate", "branch",
+}
+
+# `find` takes a command to run or a list of things to erase. These flags are
+# the whole attack surface.
+UNSAFE_FIND_FLAGS = (
+    "-delete", "-exec", "-execdir", "-ok", "-okdir",
+    "-fprint", "-fprintf", "-fls", "-fopen",
+)
+
+COMMAND_TIMEOUTS = {"find": 15, "grep": 10, "git": 10}
+
 
 def truncate(text: str, limit: int = MAX_CONTENT) -> str:
     if len(text) > limit:
         return text[:limit] + f"... [truncated {len(text) - limit} more characters]"
     return text
+
+
+def _rejection_reason(base_cmd: str, args: list[str]) -> str | None:
+    """Why this command is refused, or None if it is allowed.
+
+    Only args[0] used to be checked, which let `git push` and `find -delete`
+    through an allowlist that read as read-only.
+    """
+    if base_cmd not in ALLOWED_COMMANDS:
+        return (
+            f"'{base_cmd}' isn't allowed. I can only run read-only commands "
+            f"like: {', '.join(sorted(ALLOWED_COMMANDS))}."
+        )
+
+    rest = args[1:]
+
+    if base_cmd == "git":
+        sub = rest[0] if rest else ""
+        if sub not in READONLY_GIT_SUBCOMMANDS:
+            return (
+                f"'git {sub}' isn't read-only. I can only run git "
+                f"{', '.join(sorted(READONLY_GIT_SUBCOMMANDS))}."
+            )
+        if any(a == "--output" or a.startswith("--output=") for a in rest):
+            return "'git --output' writes to a file, so I won't run it."
+
+    if base_cmd == "find":
+        for arg in rest:
+            if arg.startswith(UNSAFE_FIND_FLAGS):
+                return (
+                    f"'find {arg}' can run commands or delete files, "
+                    "so I won't run it."
+                )
+
+    return None
+
+
+async def _read_capped(stream: asyncio.StreamReader, limit: int) -> tuple[bytes, bool]:
+    """Read at most `limit` bytes. Returns (data, hit_limit).
+
+    Stops reading instead of buffering a runaway command's whole output.
+    """
+    buf = bytearray()
+    while len(buf) < limit:
+        chunk = await stream.read(min(8192, limit - len(buf)))
+        if not chunk:
+            return bytes(buf), False
+        buf += chunk
+    return bytes(buf), True
 
 
 class BashTool:
@@ -38,11 +102,11 @@ class BashTool:
             return "No command given."
 
         base_cmd = args[0]
-        if base_cmd not in ALLOWED_COMMANDS:
-            return (
-                f"'{base_cmd}' isn't allowed. I can only run read-only commands "
-                f"like: {', '.join(sorted(ALLOWED_COMMANDS))}."
-            )
+        reason = _rejection_reason(base_cmd, args)
+        if reason:
+            return reason
+
+        timeout = COMMAND_TIMEOUTS.get(base_cmd, DEFAULT_TIMEOUT)
 
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -51,18 +115,31 @@ class BashTool:
                 stderr=asyncio.subprocess.PIPE,
             )
             try:
-                stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(), timeout=COMMAND_TIMEOUT
+                stdout, capped = await asyncio.wait_for(
+                    _read_capped(proc.stdout, MAX_CONTENT), timeout=timeout
                 )
+                if capped:
+                    proc.kill()
+                stderr, _ = await asyncio.wait_for(
+                    _read_capped(proc.stderr, MAX_CONTENT), timeout=1.0
+                )
+                await proc.wait()
             except asyncio.TimeoutError:
                 proc.kill()
                 await proc.wait()
-                return f"Command timed out after {COMMAND_TIMEOUT} seconds."
+                return f"'{base_cmd}' timed out after {timeout}s."
 
-            if proc.returncode == 0:
-                return truncate(stdout.decode(errors="replace").strip() or "(no output)")
-            else:
-                return f"Command failed: {truncate(stderr.decode(errors='replace').strip())}"
+            # A command we stopped for overrunning the cap exits on SIGKILL, so
+            # `capped` has to win over the return code or truncated-but-usable
+            # output gets reported as a failure.
+            if capped or proc.returncode == 0:
+                out = stdout.decode(errors="replace").strip() or "(no output)"
+                if capped:
+                    out += f"... [truncated at {MAX_CONTENT} bytes]"
+                return out
+            err = stderr.decode(errors="replace").strip()
+            return f"Command failed: {err[:MAX_CONTENT]}" if err else \
+                "Command failed and printed nothing (no matches, or a bad flag)."
 
         except FileNotFoundError:
             return f"Command not found: {base_cmd}"
@@ -111,40 +188,3 @@ class GetTreeTool:
             return "\n".join(lines) if lines else "(empty directory)"
 
         return await asyncio.to_thread(_walk)
-
-
-class WriteFileTool:
-    """Writes content to a file, creating parent directories as needed."""
-
-    @staticmethod
-    async def write_file(path: str, content: str) -> dict:
-        def _write():
-            p = Path(path)
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(content)
-            return p
-
-        try:
-            p = await asyncio.to_thread(_write)
-            return {"success": True, "path": str(p), "content_preview": content[:200]}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-
-class EditFileTool:
-    """Replaces the first occurrence of old_text with new_text in a file."""
-
-    @staticmethod
-    async def edit_file(path: str, old_text: str, new_text: str) -> dict:
-        def _edit():
-            p = Path(path)
-            content = p.read_text()
-            if old_text not in content:
-                return {"success": False, "error": "text not found"}
-            p.write_text(content.replace(old_text, new_text, 1))
-            return {"success": True, "path": str(p)}
-
-        try:
-            return await asyncio.to_thread(_edit)
-        except Exception as e:
-            return {"success": False, "error": str(e)}

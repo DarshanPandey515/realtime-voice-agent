@@ -1,306 +1,390 @@
 {
-  "generated_at": 1788537960.5732818,
+  "generated_at": 1791907942.3301866,
   "records": [
     {
       "component": "llm",
       "model": "groq:openai/gpt-oss-20b",
       "metric": "llm_ttft",
-      "ms": 1259.593,
-      "ts": 1788537868.8663447
+      "ms": 976.915,
+      "ts": 1791907858.6183636
     },
     {
       "component": "llm",
       "model": "groq:openai/gpt-oss-20b",
       "metric": "llm_total",
-      "ms": 1260.517,
-      "ts": 1788537868.8689258
+      "ms": 978.204,
+      "ts": 1791907858.6217043
     },
     {
       "component": "llm",
       "model": "groq:openai/gpt-oss-20b",
       "metric": "llm_ttft",
-      "ms": 477.788,
-      "ts": 1788537869.3469539
+      "ms": 440.989,
+      "ts": 1791907859.0629542
     },
     {
       "component": "llm",
       "model": "groq:openai/gpt-oss-20b",
       "metric": "llm_total",
-      "ms": 478.656,
-      "ts": 1788537869.3511088
+      "ms": 442.032,
+      "ts": 1791907859.0648522
     },
     {
       "component": "llm",
       "model": "groq:openai/gpt-oss-20b",
       "metric": "llm_ttft",
-      "ms": 395.665,
-      "ts": 1788537869.7470229
+      "ms": 523.728,
+      "ts": 1791907859.5888412
     },
     {
       "component": "llm",
       "model": "groq:openai/gpt-oss-20b",
       "metric": "llm_total",
-      "ms": 397.171,
-      "ts": 1788537869.7499468
+      "ms": 524.828,
+      "ts": 1791907859.5903554
     },
     {
       "component": "llm",
       "model": "groq:openai/gpt-oss-20b",
       "metric": "llm_ttft",
-      "ms": 479.059,
-      "ts": 1788537870.2293494
+      "ms": 496.34,
+      "ts": 1791907860.0868294
     },
     {
       "component": "llm",
       "model": "groq:openai/gpt-oss-20b",
       "metric": "llm_total",
-      "ms": 612.588,
-      "ts": 1788537870.3643062
+      "ms": 497.345,
+      "ts": 1791907860.0888867
     },
     {
       "component": "llm",
       "model": "groq:openai/gpt-oss-20b",
       "metric": "llm_ttft",
-      "ms": 649.775,
-      "ts": 1788537871.0144613
+      "ms": 468.787,
+      "ts": 1791907860.557933
     },
     {
       "component": "llm",
       "model": "groq:openai/gpt-oss-20b",
       "metric": "llm_total",
-      "ms": 651.212,
-      "ts": 1788537871.0174983
+      "ms": 469.384,
+      "ts": 1791907860.5589514
     },
     {
       "component": "llm_long",
       "model": "groq:openai/gpt-oss-20b",
       "metric": "llm_ttft",
-      "ms": 1096.641,
-      "ts": 1788537872.13702
+      "ms": 906.827,
+      "ts": 1791907861.488478
     },
     {
       "component": "llm_long",
       "model": "groq:openai/gpt-oss-20b",
       "metric": "llm_total",
-      "ms": 1103.599,
-      "ts": 1788537872.1446776
+      "ms": 907.932,
+      "ts": 1791907861.4904478
     },
     {
       "component": "llm_long",
       "model": "groq:openai/gpt-oss-20b",
       "metric": "llm_ttft",
-      "ms": 790.931,
-      "ts": 1788537872.9358041
+      "ms": 277.171,
+      "ts": 1791907861.7678554
     },
     {
       "component": "llm_long",
       "model": "groq:openai/gpt-oss-20b",
       "metric": "llm_total",
-      "ms": 833.323,
-      "ts": 1788537872.9789345
+      "ms": 304.408,
+      "ts": 1791907861.795504
     },
     {
       "component": "llm_long",
       "model": "groq:openai/gpt-oss-20b",
       "metric": "llm_ttft",
-      "ms": 594.173,
-      "ts": 1788537873.5733278
+      "ms": 1586.876,
+      "ts": 1791907863.3825357
     },
     {
       "component": "llm_long",
       "model": "groq:openai/gpt-oss-20b",
       "metric": "llm_total",
-      "ms": 680.696,
-      "ts": 1788537873.6605864
+      "ms": 1587.725,
+      "ts": 1791907863.384844
     },
     {
       "component": "llm_long",
       "model": "groq:openai/gpt-oss-20b",
       "metric": "llm_ttft",
-      "ms": 947.847,
-      "ts": 1788537874.6086476
+      "ms": 542.252,
+      "ts": 1791907863.927335
     },
     {
       "component": "llm_long",
       "model": "groq:openai/gpt-oss-20b",
       "metric": "llm_total",
-      "ms": 988.922,
-      "ts": 1788537874.6503918
+      "ms": 567.6,
+      "ts": 1791907863.9538276
     },
     {
       "component": "llm_long",
       "model": "groq:openai/gpt-oss-20b",
       "metric": "llm_ttft",
-      "ms": 525.317,
-      "ts": 1788537875.1759021
+      "ms": 679.266,
+      "ts": 1791907864.6333666
     },
     {
       "component": "llm_long",
       "model": "groq:openai/gpt-oss-20b",
       "metric": "llm_total",
-      "ms": 572.731,
-      "ts": 1788537875.223961
+      "ms": 721.313,
+      "ts": 1791907864.676442
     },
     {
       "component": "model",
       "model": "groq:openai/gpt-oss-20b",
       "metric": "llm_total",
-      "ms": 741.16,
-      "ts": 1788537875.9803157
+      "ms": 622.473,
+      "ts": 1791907865.310408
     },
     {
       "component": "tts",
       "model": "eleven_flash_v2_5",
       "metric": "tts_first_chunk",
-      "ms": 690.993,
-      "ts": 1788537876.8732157
+      "ms": 465.502,
+      "ts": 1791907865.9350002
     },
     {
       "component": "tts",
       "model": "eleven_flash_v2_5",
       "metric": "tts_total",
-      "ms": 772.552,
-      "ts": 1788537876.9547713
+      "ms": 655.013,
+      "ts": 1791907866.1245136
     },
     {
       "component": "tts",
       "model": "eleven_flash_v2_5",
       "metric": "tts_audio_rate",
-      "ms": 277.259,
-      "ts": 1788537876.9547796
+      "ms": 223.881,
+      "ts": 1791907866.1245234
     },
     {
       "component": "tts",
       "model": "eleven_flash_v2_5",
       "metric": "tts_first_chunk",
-      "ms": 196.207,
-      "ts": 1788537877.1512492
+      "ms": 231.932,
+      "ts": 1791907866.3567848
     },
     {
       "component": "tts",
       "model": "eleven_flash_v2_5",
       "metric": "tts_total",
-      "ms": 323.036,
-      "ts": 1788537877.278072
+      "ms": 345.691,
+      "ts": 1791907866.4705424
     },
     {
       "component": "tts",
       "model": "eleven_flash_v2_5",
       "metric": "tts_audio_rate",
-      "ms": 117.898,
-      "ts": 1788537877.2780783
+      "ms": 118.156,
+      "ts": 1791907866.470549
     },
     {
       "component": "tts",
       "model": "eleven_flash_v2_5",
       "metric": "tts_first_chunk",
-      "ms": 254.346,
-      "ts": 1788537877.532608
+      "ms": 240.077,
+      "ts": 1791907866.7108588
     },
     {
       "component": "tts",
       "model": "eleven_flash_v2_5",
       "metric": "tts_total",
-      "ms": 431.229,
-      "ts": 1788537877.7094924
+      "ms": 324.675,
+      "ts": 1791907866.795457
     },
     {
       "component": "tts",
       "model": "eleven_flash_v2_5",
       "metric": "tts_audio_rate",
-      "ms": 154.762,
-      "ts": 1788537877.7094996
+      "ms": 112.763,
+      "ts": 1791907866.7954628
     },
     {
       "component": "tts",
       "model": "eleven_flash_v2_5",
       "metric": "tts_first_chunk",
-      "ms": 335.914,
-      "ts": 1788537878.0456579
+      "ms": 231.82,
+      "ts": 1791907867.0275102
     },
     {
       "component": "tts",
       "model": "eleven_flash_v2_5",
       "metric": "tts_total",
-      "ms": 520.249,
-      "ts": 1788537878.2299948
+      "ms": 340.995,
+      "ts": 1791907867.1366832
     },
     {
       "component": "tts",
       "model": "eleven_flash_v2_5",
       "metric": "tts_audio_rate",
-      "ms": 186.711,
-      "ts": 1788537878.2300043
+      "ms": 116.551,
+      "ts": 1791907867.136689
     },
     {
       "component": "tts",
       "model": "eleven_flash_v2_5",
       "metric": "tts_first_chunk",
-      "ms": 194.432,
-      "ts": 1788537878.4247959
+      "ms": 225.37,
+      "ts": 1791907867.3622863
     },
     {
       "component": "tts",
       "model": "eleven_flash_v2_5",
       "metric": "tts_total",
-      "ms": 279.296,
-      "ts": 1788537878.5096407
+      "ms": 323.39,
+      "ts": 1791907867.460304
     },
     {
       "component": "tts",
       "model": "eleven_flash_v2_5",
       "metric": "tts_audio_rate",
-      "ms": 98.592,
-      "ts": 1788537878.5096498
+      "ms": 110.534,
+      "ts": 1791907867.4603097
     },
     {
       "component": "asr",
       "model": "universal-3-5-pro",
       "metric": "asr_connect",
-      "ms": 1463.334,
-      "ts": 1788537880.0883002
+      "ms": 7170.003,
+      "ts": 1791907874.7385697
+    },
+    {
+      "component": "asr",
+      "model": "universal-3-5-pro",
+      "metric": "asr_connect",
+      "ms": 1312.999,
+      "ts": 1791907876.8891423
+    },
+    {
+      "component": "asr",
+      "model": "universal-3-5-pro",
+      "metric": "asr_connect",
+      "ms": 1368.469,
+      "ts": 1791907879.0917013
+    },
+    {
+      "component": "asr",
+      "model": "universal-3-5-pro",
+      "metric": "asr_turn",
+      "ms": 764.399,
+      "ts": 1791907885.9303477
     },
     {
       "component": "e2e",
       "model": "universal-3-5-pro",
       "metric": "e2e_asr_turn",
-      "ms": 3793.438,
-      "ts": 1788537954.480683
+      "ms": 769.841,
+      "ts": 1791907892.0531974
     },
     {
       "component": "e2e",
       "model": "groq:openai/gpt-oss-20b",
       "metric": "e2e_pipeline",
-      "ms": 6012.556,
-      "ts": 1788537956.73232
+      "ms": 1761.729,
+      "ts": 1791907893.0616755
     },
     {
       "component": "e2e",
       "model": "groq:openai/gpt-oss-20b",
       "metric": "e2e_pipeline",
-      "ms": 5222.293,
-      "ts": 1788537958.1614447
+      "ms": 1774.785,
+      "ts": 1791907894.0676334
     },
     {
       "component": "e2e",
       "model": "groq:openai/gpt-oss-20b",
       "metric": "e2e_pipeline",
-      "ms": 4518.999,
-      "ts": 1788537958.8872788
+      "ms": 1652.625,
+      "ts": 1791907894.9510272
     },
     {
       "component": "e2e",
       "model": "groq:openai/gpt-oss-20b",
       "metric": "e2e_pipeline",
-      "ms": 4656.389,
-      "ts": 1788537959.750786
+      "ms": 1404.465,
+      "ts": 1791907895.586378
     },
     {
       "component": "e2e",
       "model": "groq:openai/gpt-oss-20b",
       "metric": "e2e_pipeline",
-      "ms": 4611.07,
-      "ts": 1788537960.5687187
+      "ms": 1670.269,
+      "ts": 1791907896.4877012
+    },
+    {
+      "component": "e2e",
+      "model": "groq:openai/gpt-oss-20b",
+      "metric": "e2e_pipeline",
+      "ms": 937.39,
+      "ts": 1791907897.4600353
+    },
+    {
+      "component": "llm",
+      "model": "groq:openai/gpt-oss-20b",
+      "metric": "llm_first_sentence",
+      "ms": 1023.73,
+      "ts": 1791907898.4837806
+    },
+    {
+      "component": "e2e",
+      "model": "groq:openai/gpt-oss-20b",
+      "metric": "e2e_first_audio",
+      "ms": 1442.557,
+      "ts": 1791907898.9041722
+    },
+    {
+      "component": "e2e",
+      "model": "groq:openai/gpt-oss-20b",
+      "metric": "e2e_pipeline",
+      "ms": 684.137,
+      "ts": 1791907899.5885866
+    },
+    {
+      "component": "llm",
+      "model": "groq:openai/gpt-oss-20b",
+      "metric": "llm_first_sentence",
+      "ms": 580.821,
+      "ts": 1791907900.1694226
+    },
+    {
+      "component": "e2e",
+      "model": "groq:openai/gpt-oss-20b",
+      "metric": "e2e_first_audio",
+      "ms": 1015.856,
+      "ts": 1791907900.6060221
+    },
+    {
+      "component": "e2e",
+      "model": "groq:openai/gpt-oss-20b",
+      "metric": "e2e_pipeline",
+      "ms": 1058.732,
+      "ts": 1791907901.6649544
+    },
+    {
+      "component": "llm",
+      "model": "groq:openai/gpt-oss-20b",
+      "metric": "llm_first_sentence",
+      "ms": 40265.193,
+      "ts": 1791907941.930163
+    },
+    {
+      "component": "e2e",
+      "model": "groq:openai/gpt-oss-20b",
+      "metric": "e2e_first_audio",
+      "ms": 40661.054,
+      "ts": 1791907942.3272958
     }
   ]
 }

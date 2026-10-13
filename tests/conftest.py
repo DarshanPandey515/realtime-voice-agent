@@ -20,6 +20,8 @@ ALLOWED_LATENCY_METRICS = {
     "tts_audio_rate",
     "e2e_asr_turn",
     "e2e_pipeline",
+    "e2e_first_audio",
+    "llm_first_sentence",
 }
 
 

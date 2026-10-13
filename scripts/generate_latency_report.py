@@ -29,7 +29,8 @@ METRIC_LABELS = {
     "tts_first_chunk": "Time-to-first-audio-chunk",
     "tts_total": "Full synthesis",
     "tts_audio_rate": "Synthesis real-time factor (x)",
-    "e2e_pipeline": "User turn -> audio plays",
+    "e2e_asr_turn": "ASR turn component (measured separately)",
+    "e2e_pipeline": "Serial stage sum (end of speech -> audio)",
 }
 
 
@@ -131,11 +132,13 @@ def _markdown(rows, generated_at):
     )
     lines.append(
         "- ASR `connect` = WebSocket session setup. Turn latency requires real speech "
-        "(set `ASR_AUDIO_FILE`)."
+        "(set `ASR_AUDIO_FILE`) and is measured with audio paced at wall-clock speed, "
+        "starting from end of speech."
     )
     lines.append(
-        "- End-to-end pipeline = ASR turn (mocked in test) + LLM total + TTS first chunk; "
-        "represents time from end of speech to audio start."
+        "- End-to-end = ASR turn + LLM total + TTS first chunk, summed explicitly from "
+        "separately-measured stages. No mic or speaker is involved, so this is a serial "
+        "upper bound, not a live speech-to-speech measurement."
     )
     lines.append("- Run with: `uv run pytest tests/test_latency.py -v`")
     lines.append("")

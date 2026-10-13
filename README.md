@@ -18,10 +18,10 @@ flowchart LR
 
 | File       | Role                                             |
 |------------|--------------------------------------------------|
-| `main.py`  | Orchestrator — `VoiceAgent` loop and wiring      |
-| `asr.py`   | Streaming ASR over WebSocket, turn queue, connect timeout |
-| `llm.py`   | Agent with system prompt, tools, last-10-turn history |
-| `tts.py`   | Streaming TTS with interrupt (barge-in) support  |
+| `main.py`  | Orchestrator — mic thread, turn loop, responder loop, wiring |
+| `asr.py`   | Async streaming ASR over WebSocket, bounded turn queue, connect timeout |
+| `llm.py`   | Agent with system prompt, tools, turn-based history, sentence streaming |
+| `tts.py`   | Streaming TTS played off the event loop, interrupt (barge-in) support |
 | `tools.py` | Tool implementations: bash allowlist, read file, project tree |
 | `config.py`| Model ids, voice id, sample rates, API keys      |
 
@@ -31,11 +31,34 @@ Turn flow:
 flowchart TD
     A[User speaks] --> B{End of turn?}
     B -- no --> A
-    B -- yes --> C[TTS interrupt if playing]
-    C --> D[LLM reply]
-    D --> E[Stream reply audio]
-    E --> F[Log turn to console]
+    B -- yes --> C[Interrupt TTS if playing]
+    C --> D[LLM streams, sentence by sentence]
+    D --> E[Speak each sentence as it lands]
+    E --> F[Next turn, or barge-in stops E]
 ```
+
+## Tests
+
+```bash
+uv run pytest tests/test_pipeline_units.py -v   # no API keys, no audio device
+```
+
+Covers the bash allowlist, output capping, turn-based history, sentence splitting, and
+the barge-in path. The latency suite needs keys and, for a real ASR turn number, a
+16 kHz mono wav via `ASR_AUDIO_FILE`.
+
+## Known limits
+
+- Single turn queue and single response at a time — no overlap between turns.
+- No echo cancellation, so the mic hears the agent's own speaker. Barge-in is
+  turn-based, so the agent finishes your sentence before it can be cut off mid-word.
+- `find`/`grep` can stall a turn silently for up to 15 s; nothing tells the user it is
+  waiting.
+- Tool calls can push a turn to tens of seconds, far past anything the latency table
+  suggests.
+- Full user speech is written to logs at INFO.
+
+See `implementation.md` for the engineering review behind these choices.
 
 ## Requirements
 
@@ -78,30 +101,56 @@ The agent exposes three tools, all designed to be voice-friendly (output is trun
 
 | Tool | Backing class | Description |
 |------|---------------|-------------|
-| `bash_tool` | `BashTool` | Runs read-only shell commands from a fixed allowlist (`ls`, `pwd`, `cat`, `head`, `tail`, `grep`, `find`, `git`, `wc`, `echo`, `date`, `whoami`, `df`, `du`). Executed asynchronously with a 10 s timeout; anything outside the allowlist is rejected. |
+| `bash_tool` | `BashTool` | Runs read-only shell commands from a fixed allowlist (`ls`, `pwd`, `cat`, `head`, `tail`, `grep`, `find`, `git`, `wc`, `echo`, `date`, `whoami`, `df`, `du`). Anything outside the allowlist is rejected. |
 | `readfile_tool` | `ReadFileTool` | Reads a text file's contents (truncated) from disk. |
 | `get_tree_tool` | `GetTreeTool` | Lists project files, capped at 200 entries, ignoring `.git`, `__pycache__`, `venv`, `node_modules`, etc. |
 
-`tools.py` also defines `WriteFileTool` and `EditFileTool` for writing/editing files, but they are not registered on the agent yet — the assistant stays read-only for now.
+The allowlist checks more than the first word, because checking only `args[0]` made it
+sound read-only while it was not:
+
+- `git` is pinned to genuinely read-only subcommands (`status`, `log`, `diff`, `show`,
+  `blame`, `describe`, `shortlog`, `ls-files`, `rev-parse`, `cat-file`, `annotate`,
+  `branch`). `git push`, `git config --global` and `git log --output=file` are refused.
+- `find` refuses `-delete`, `-exec`, `-execdir`, `-ok`, `-okdir` and the `-fprint`
+  family, which can run commands or erase files.
+- Output is read up to a 1500-byte cap and the subprocess is killed at the cap, so a
+  runaway `find` cannot exhaust memory or wedge the turn. Per-command timeouts apply
+  (`find` 15 s, `grep`/`git` 10 s, otherwise 5 s).
+
+Earlier versions also defined `WriteFileTool` and `EditFileTool`. They were never
+registered and `EditFileTool` would have been an unsandboxed arbitrary-file-write, so
+both were deleted rather than left armed.
 
 ## Latency
 
 Measured by the benchmark suite (`tests/test_latency.py`); latest numbers in `reports/latency_report.md`.
+Reproduce with `ASR_AUDIO_FILE=tests/sample.wav uv run pytest tests/test_latency.py -v`.
 
 | Stage | This pipeline | Industry 2026 | Verdict |
 |-------|---------------|---------------|---------|
-| ASR streaming/turn | ~2.26 s | Deepgram Nova-3 ~150 ms, AssemblyAI ~200 ms | Inflated by test methodology — the whole clip is fired at once, not real-time-paced (see note) |
-| ASR WebSocket connect | ~1.39 s | Not an industry-benchmarked metric — sockets open once per session and are reused | Only affects session startup, not steady-state latency |
-| LLM time-to-first-token (Groq `gpt-oss-20b`) | ~497 ms | Groq typically sub-200–300 ms for short outputs | Likely network RTT from your location, not model speed |
-| TTS first audio chunk (ElevenLabs Flash) | 215 ms | 100–250 ms standard; premium neural voices 250–500 ms | Healthy, mid-pack |
-| TTS full synthesis | 309 ms | Same bracket | Fine |
-| End-to-end (end of speech → audio starts) | ~900 ms–1.2 s (best-case)* | Vapi ~720 ms p50/1050 ms p95, Retell ~680/920 ms, Bland ~850/1180 ms, Twilio ConversationRelay ~491/713 ms | Acceptable, slightly noticeable; behind the fastest cascaded platforms |
+| ASR turn (end of speech → transcript) | ~764 ms | Deepgram Nova-3 ~150 ms, AssemblyAI ~200 ms | Behind, but this is a real paced measurement — the old ~3.8 s figure was an artifact of firing the whole clip at once |
+| LLM time-to-first-token (Groq `gpt-oss-20b`) | ~496 ms p50 | Groq typically sub-200–300 ms for short outputs | Likely network RTT plus reasoning-token overhead; `gpt-oss-20b` thinks before it answers |
+| TTS first audio chunk (ElevenLabs Flash) | ~254 ms p50 | 100–250 ms standard; premium neural voices 250–500 ms | Healthy, mid-pack |
+| End-to-end (end of speech → audio) | ~1.5 s serial sum | Vapi ~720 ms p50/1050 ms p95, Retell ~680/920 ms, Bland ~850/1180 ms, Twilio ConversationRelay ~491/713 ms | Behind the fastest cascaded platforms |
 
-\* Best-case estimate covering LLM + TTS only — ASR turn is mocked in the test, so real speech-to-speech latency is higher. Cascaded pipelines generally run 600–1200 ms end-to-end vs 300–700 ms for speech-to-speech.
+The end-to-end figure is a **serial sum of separately measured stages**, not a live
+speech-to-speech measurement — there is no mic or speaker in the harness. It is also an
+upper bound: the real pipeline now overlaps stages, and a sum cannot show that.
+
+Two honest caveats about where the remaining time goes:
+
+- **Streaming the LLM into TTS does not buy much here.** The whole reply arrives from
+  Groq as a single delta, so the first sentence is available essentially when the last
+  one is. It helps on long replies and costs nothing, but it is not the multi-second win
+  one might expect. The dominant term is model TTFT, which sentence-level streaming
+  cannot touch.
+- **The concurrency fixes do not show up in these numbers at all**, because the harness
+  sums stages instead of running them together. What they buy is barge-in: the agent can
+  now be interrupted mid-sentence instead of finishing first.
 
 ## Benchmark
 
 ```bash
-uv run pytest tests/test_latency.py -v    # requires API keys
+ASR_AUDIO_FILE=tests/sample.wav uv run pytest tests/test_latency.py -v   # requires API keys
 .venv/bin/python scripts/generate_latency_report.py
 ```

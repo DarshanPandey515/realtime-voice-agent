@@ -1,4 +1,6 @@
 # llm_agent.py
+import re
+
 from pydantic_ai.agent import Agent
 from pydantic_ai import RunContext
 from voice_agent.tools import BashTool, ReadFileTool, GetTreeTool
@@ -7,9 +9,24 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+MAX_TURNS = 6
+_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+")
+
+
+def split_sentences(buf: str) -> tuple[list[str], str]:
+    """Pull complete sentences off the front of buf. Returns (sentences, tail)."""
+    sentences = []
+    while (cut := _SENTENCE_BOUNDARY.search(buf)) is not None:
+        sentence, buf = buf[: cut.start()].strip(), buf[cut.end():]
+        if sentence:
+            sentences.append(sentence)
+    return sentences, buf
+
 SYSTEM_PROMPT = """
 You are a helpful, natural-sounding voice assistant. Keep responses:
 - Concise and conversational (1-3 sentences)
+- No long sentences
+- to heavy words, only simple easy words to talk
 - Spoken-style: no markdown, lists, or labels
 - Direct and clear
 
@@ -30,7 +47,10 @@ class LLMAgent:
             system_prompt=SYSTEM_PROMPT,
         )
         self.register_tools()
-        self.conversation_history = []
+        # Whole turns, not raw messages: one run appends a user message plus a
+        # response plus any tool calls, and slicing a flat list cuts a
+        # ToolCallPart away from its ToolReturnPart.
+        self._turns = []
 
     def register_tools(self):
         @self.agent.tool
@@ -48,10 +68,43 @@ class LLMAgent:
             """List the files in the current project directory."""
             return await GetTreeTool.get_tree()
 
-    async def generate_response(self, user_text: str) -> str:
-        context = self.conversation_history[-10:]
-        response = await self.agent.run(user_text, message_history=context)
+    @property
+    def history(self):
+        return [m for turn in self._turns for m in turn]
 
-        self.conversation_history.extend(response.all_messages())
-        self.conversation_history = self.conversation_history[-10:]
-        return response.output
+    def _record_turn(self, result) -> None:
+        self._turns.append(list(result.all_messages()))
+        self._turns = self._turns[-MAX_TURNS:]
+
+    async def generate_response(self, user_text: str) -> str:
+        parts: list[str] = []
+
+        async def collect(sentence: str) -> None:
+            parts.append(sentence)
+
+        await self.stream_into(user_text, collect)
+        return " ".join(parts)
+
+    async def stream_into(self, user_text: str, on_sentence) -> None:
+        """Hand each sentence to `on_sentence` as it completes.
+
+        So TTS can start before the reply is finished. Takes a callback instead
+        of being an async generator on purpose: pydantic-ai's streaming context
+        cannot be unwound by async-generator finalisation, so a generator
+        abandoned on barge-in raises out of its own `async with`.
+        """
+        buf = ""
+        async with self.agent.run_stream(
+            user_text, message_history=self.history
+        ) as result:
+            try:
+                async for delta in result.stream_text(delta=True, debounce_by=0.05):
+                    buf += delta
+                    sentences, buf = split_sentences(buf)
+                    for sentence in sentences:
+                        await on_sentence(sentence)
+                tail = buf.strip()
+                if tail:
+                    await on_sentence(tail)
+            finally:
+                self._record_turn(result)

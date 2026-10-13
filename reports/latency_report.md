@@ -1,54 +1,60 @@
 # Voice Agent Latency Report
 
-_Generated: 2026-09-04 16:06 UTC | Results: `reports/latency_results.json`_
+_Generated: 2026-10-13 16:20 UTC | Results: `reports/latency_results.json`_
 
 ## Summary
 
 | Component | Model | Metric | Samples | Min | Mean | Median (p50) | p95 | Max | Std dev |
 |---|---|---|---|---|---|---|---|---|---|
-| Speech-to-Text (AssemblyAI) | `universal-3-5-pro` | WebSocket connect | 1 | 1463.3 ms | 1463.3 ms | 1463.3 ms | 1463.3 ms | 1463.3 ms | 0.0 ms |
-| End-to-end pipeline | `groq:openai/gpt-oss-20b` | User turn -> audio plays | 5 | 4519.0 ms | 5004.3 ms | 4656.4 ms | 6012.6 ms | 6012.6 ms | 627.6 ms |
-| End-to-end pipeline | `universal-3-5-pro` | e2e_asr_turn | 1 | 3793.4 ms | 3793.4 ms | 3793.4 ms | 3793.4 ms | 3793.4 ms | 0.0 ms |
-| LLM (Groq) | `groq:openai/gpt-oss-20b` | Full response | 5 | 397.2 ms | 680.0 ms | 612.6 ms | 1260.5 ms | 1260.5 ms | 340.2 ms |
-| LLM (Groq) | `groq:openai/gpt-oss-20b` | Time-to-first-token (TTFT) | 5 | 395.7 ms | 652.4 ms | 479.1 ms | 1259.6 ms | 1259.6 ms | 351.8 ms |
-| llm_long | `groq:openai/gpt-oss-20b` | Full response | 5 | 572.7 ms | 835.9 ms | 833.3 ms | 1103.6 ms | 1103.6 ms | 217.0 ms |
-| llm_long | `groq:openai/gpt-oss-20b` | Time-to-first-token (TTFT) | 5 | 525.3 ms | 791.0 ms | 790.9 ms | 1096.6 ms | 1096.6 ms | 238.4 ms |
-| Model inference | `groq:openai/gpt-oss-20b` | Full response | 1 | 741.2 ms | 741.2 ms | 741.2 ms | 741.2 ms | 741.2 ms | 0.0 ms |
-| Text-to-Speech (ElevenLabs) | `eleven_flash_v2_5` | Synthesis real-time factor (x) | 5 | 98.59x | 167.04x | 154.76x | 277.26x | 277.26x | 70.33x |
-| Text-to-Speech (ElevenLabs) | `eleven_flash_v2_5` | Time-to-first-audio-chunk | 5 | 194.4 ms | 334.4 ms | 254.3 ms | 691.0 ms | 691.0 ms | 207.5 ms |
-| Text-to-Speech (ElevenLabs) | `eleven_flash_v2_5` | Full synthesis | 5 | 279.3 ms | 465.3 ms | 431.2 ms | 772.6 ms | 772.6 ms | 195.8 ms |
+| Speech-to-Text (AssemblyAI) | `universal-3-5-pro` | WebSocket connect | 3 | 1313.0 ms | 3283.8 ms | 1368.5 ms | 7170.0 ms | 7170.0 ms | 3365.6 ms |
+| Speech-to-Text (AssemblyAI) | `universal-3-5-pro` | Audio -> transcript (turn) | 1 | 764.4 ms | 764.4 ms | 764.4 ms | 764.4 ms | 764.4 ms | 0.0 ms |
+| End-to-end pipeline | `groq:openai/gpt-oss-20b` | e2e_first_audio | 3 | 1015.9 ms | 14373.2 ms | 1442.6 ms | 40661.1 ms | 40661.1 ms | 22767.0 ms |
+| End-to-end pipeline | `groq:openai/gpt-oss-20b` | Serial stage sum (end of speech -> audio) | 8 | 684.1 ms | 1368.0 ms | 1528.5 ms | 1774.8 ms | 1774.8 ms | 421.4 ms |
+| End-to-end pipeline | `universal-3-5-pro` | ASR turn component (measured separately) | 1 | 769.8 ms | 769.8 ms | 769.8 ms | 769.8 ms | 769.8 ms | 0.0 ms |
+| LLM (Groq) | `groq:openai/gpt-oss-20b` | llm_first_sentence | 3 | 580.8 ms | 13956.6 ms | 1023.7 ms | 40265.2 ms | 40265.2 ms | 22785.0 ms |
+| LLM (Groq) | `groq:openai/gpt-oss-20b` | Full response | 5 | 442.0 ms | 582.4 ms | 497.3 ms | 978.2 ms | 978.2 ms | 223.4 ms |
+| LLM (Groq) | `groq:openai/gpt-oss-20b` | Time-to-first-token (TTFT) | 5 | 441.0 ms | 581.4 ms | 496.3 ms | 976.9 ms | 976.9 ms | 223.3 ms |
+| llm_long | `groq:openai/gpt-oss-20b` | Full response | 5 | 304.4 ms | 817.8 ms | 721.3 ms | 1587.7 ms | 1587.7 ms | 483.8 ms |
+| llm_long | `groq:openai/gpt-oss-20b` | Time-to-first-token (TTFT) | 5 | 277.2 ms | 798.5 ms | 679.3 ms | 1586.9 ms | 1586.9 ms | 496.2 ms |
+| Model inference | `groq:openai/gpt-oss-20b` | Full response | 1 | 622.5 ms | 622.5 ms | 622.5 ms | 622.5 ms | 622.5 ms | 0.0 ms |
+| Text-to-Speech (ElevenLabs) | `eleven_flash_v2_5` | Synthesis real-time factor (x) | 5 | 110.53x | 136.38x | 116.55x | 223.88x | 223.88x | 49.01x |
+| Text-to-Speech (ElevenLabs) | `eleven_flash_v2_5` | Time-to-first-audio-chunk | 5 | 225.4 ms | 278.9 ms | 231.9 ms | 465.5 ms | 465.5 ms | 104.4 ms |
+| Text-to-Speech (ElevenLabs) | `eleven_flash_v2_5` | Full synthesis | 5 | 323.4 ms | 398.0 ms | 341.0 ms | 655.0 ms | 655.0 ms | 144.0 ms |
 
 ## Component Breakdown
 
 ### Speech-to-Text (AssemblyAI)
 
-- **WebSocket connect** (`universal-3-5-pro`): mean 1463.3 ms, p50 1463.3 ms, p95 1463.3 ms (n=1, range 1463.3 ms–1463.3 ms)
+- **WebSocket connect** (`universal-3-5-pro`): mean 3283.8 ms, p50 1368.5 ms, p95 7170.0 ms (n=3, range 1313.0 ms–7170.0 ms)
+- **Audio -> transcript (turn)** (`universal-3-5-pro`): mean 764.4 ms, p50 764.4 ms, p95 764.4 ms (n=1, range 764.4 ms–764.4 ms)
 ### End-to-end pipeline
 
-- **User turn -> audio plays** (`groq:openai/gpt-oss-20b`): mean 5004.3 ms, p50 4656.4 ms, p95 6012.6 ms (n=5, range 4519.0 ms–6012.6 ms)
-- **e2e_asr_turn** (`universal-3-5-pro`): mean 3793.4 ms, p50 3793.4 ms, p95 3793.4 ms (n=1, range 3793.4 ms–3793.4 ms)
+- **e2e_first_audio** (`groq:openai/gpt-oss-20b`): mean 14373.2 ms, p50 1442.6 ms, p95 40661.1 ms (n=3, range 1015.9 ms–40661.1 ms)
+- **Serial stage sum (end of speech -> audio)** (`groq:openai/gpt-oss-20b`): mean 1368.0 ms, p50 1528.5 ms, p95 1774.8 ms (n=8, range 684.1 ms–1774.8 ms)
+- **ASR turn component (measured separately)** (`universal-3-5-pro`): mean 769.8 ms, p50 769.8 ms, p95 769.8 ms (n=1, range 769.8 ms–769.8 ms)
 ### LLM (Groq)
 
-- **Full response** (`groq:openai/gpt-oss-20b`): mean 680.0 ms, p50 612.6 ms, p95 1260.5 ms (n=5, range 397.2 ms–1260.5 ms)
-- **Time-to-first-token (TTFT)** (`groq:openai/gpt-oss-20b`): mean 652.4 ms, p50 479.1 ms, p95 1259.6 ms (n=5, range 395.7 ms–1259.6 ms)
+- **llm_first_sentence** (`groq:openai/gpt-oss-20b`): mean 13956.6 ms, p50 1023.7 ms, p95 40265.2 ms (n=3, range 580.8 ms–40265.2 ms)
+- **Full response** (`groq:openai/gpt-oss-20b`): mean 582.4 ms, p50 497.3 ms, p95 978.2 ms (n=5, range 442.0 ms–978.2 ms)
+- **Time-to-first-token (TTFT)** (`groq:openai/gpt-oss-20b`): mean 581.4 ms, p50 496.3 ms, p95 976.9 ms (n=5, range 441.0 ms–976.9 ms)
 ### llm_long
 
-- **Full response** (`groq:openai/gpt-oss-20b`): mean 835.9 ms, p50 833.3 ms, p95 1103.6 ms (n=5, range 572.7 ms–1103.6 ms)
-- **Time-to-first-token (TTFT)** (`groq:openai/gpt-oss-20b`): mean 791.0 ms, p50 790.9 ms, p95 1096.6 ms (n=5, range 525.3 ms–1096.6 ms)
+- **Full response** (`groq:openai/gpt-oss-20b`): mean 817.8 ms, p50 721.3 ms, p95 1587.7 ms (n=5, range 304.4 ms–1587.7 ms)
+- **Time-to-first-token (TTFT)** (`groq:openai/gpt-oss-20b`): mean 798.5 ms, p50 679.3 ms, p95 1586.9 ms (n=5, range 277.2 ms–1586.9 ms)
 ### Model inference
 
-- **Full response** (`groq:openai/gpt-oss-20b`): mean 741.2 ms, p50 741.2 ms, p95 741.2 ms (n=1, range 741.2 ms–741.2 ms)
+- **Full response** (`groq:openai/gpt-oss-20b`): mean 622.5 ms, p50 622.5 ms, p95 622.5 ms (n=1, range 622.5 ms–622.5 ms)
 ### Text-to-Speech (ElevenLabs)
 
-- **Synthesis real-time factor (x)** (`eleven_flash_v2_5`): mean 167.04x, p50 154.76x, p95 277.26x (n=5, range 98.59x–277.26x)
-- **Time-to-first-audio-chunk** (`eleven_flash_v2_5`): mean 334.4 ms, p50 254.3 ms, p95 691.0 ms (n=5, range 194.4 ms–691.0 ms)
-- **Full synthesis** (`eleven_flash_v2_5`): mean 465.3 ms, p50 431.2 ms, p95 772.6 ms (n=5, range 279.3 ms–772.6 ms)
+- **Synthesis real-time factor (x)** (`eleven_flash_v2_5`): mean 136.38x, p50 116.55x, p95 223.88x (n=5, range 110.53x–223.88x)
+- **Time-to-first-audio-chunk** (`eleven_flash_v2_5`): mean 278.9 ms, p50 231.9 ms, p95 465.5 ms (n=5, range 225.4 ms–465.5 ms)
+- **Full synthesis** (`eleven_flash_v2_5`): mean 398.0 ms, p50 341.0 ms, p95 655.0 ms (n=5, range 323.4 ms–655.0 ms)
 
 ## Notes
 
 - All timings are wall-clock, measured from the client machine.
 - LLM latency uses streaming; TTFT = first generated token.
 - TTS `first_chunk` = time until first PCM audio chunk; `total` = until the audio stream is fully received.
-- ASR `connect` = WebSocket session setup. Turn latency requires real speech (set `ASR_AUDIO_FILE`).
-- End-to-end pipeline = ASR turn (mocked in test) + LLM total + TTS first chunk; represents time from end of speech to audio start.
+- ASR `connect` = WebSocket session setup. Turn latency requires real speech (set `ASR_AUDIO_FILE`) and is measured with audio paced at wall-clock speed, starting from end of speech.
+- End-to-end = ASR turn + LLM total + TTS first chunk, summed explicitly from separately-measured stages. No mic or speaker is involved, so this is a serial upper bound, not a live speech-to-speech measurement.
 - Run with: `uv run pytest tests/test_latency.py -v`

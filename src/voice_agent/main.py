@@ -1,11 +1,13 @@
 import asyncio
+import logging
+import threading
+
 import pyaudio
+
 from voice_agent.asr import StreamingASR
+from voice_agent.config import asr_config
 from voice_agent.llm import LLMAgent
 from voice_agent.tts import StreamingTTS
-from voice_agent.config import asr_config
-import logging
-
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
@@ -13,80 +15,146 @@ logger = logging.getLogger(__name__)
 
 
 class VoiceAgent:
+
     def __init__(self):
         self.asr = StreamingASR()
         self.llm = LLMAgent()
         self.tts = StreamingTTS()
         self.is_running = False
-    
-    async def process_turns(self):
+        self._mic_error = None
+        # Mic thread -> event loop. The pump drains this in the loop thread,
+        # so asyncio.Queue is only ever touched from one side.
+        self._frames = asyncio.Queue(maxsize=64)
+        self._turns = asyncio.Queue(maxsize=1)
+        self._barge_in = asyncio.Event()
+
+    def _offer(self, data: bytes) -> None:
+        try:
+            self._frames.put_nowait(data)
+        except asyncio.QueueFull:
+            self._frames.get_nowait()
+            self._frames.put_nowait(data)
+
+    def _mic_thread(self, loop) -> None:
+        p = pyaudio.PyAudio()
+        stream = None
+        try:
+            stream = p.open(
+                format=pyaudio.paInt16,
+                channels=1,
+                rate=asr_config.sample_rate,
+                input=True,
+                frames_per_buffer=asr_config.frames_per_buffer,
+            )
+            while self.is_running:
+                data = stream.read(
+                    asr_config.frames_per_buffer,
+                    exception_on_overflow=False,
+                )
+                loop.call_soon_threadsafe(self._offer, data)
+        except Exception as e:
+            self._mic_error = e
+        finally:
+            if stream is not None:
+                stream.stop_stream()
+                stream.close()
+            p.terminate()
+
+    async def _pump_audio(self) -> None:
+        while self.is_running:
+            await self.asr.stream_audio(await self._frames.get())
+
+    async def _turn_loop(self) -> None:
+        """Take finished turns and hand them to the responder.
+
+        Kept separate from responding so a new turn can interrupt playback
+        while the agent is still talking.
+        """
         while self.is_running:
             try:
                 user_text = await self.asr.get_next_turn()
-                
-                if self.tts.is_playing:
-                    self.tts.interrupt()
-                
-                response = await self.llm.generate_response(user_text)
-                logger.info("Assistant: %s", response)
-                
-                await self.tts.speak(response)
-                
             except asyncio.CancelledError:
                 break
-            
+            except Exception as e:
+                logger.debug("Turn error: %s", e)
+                continue
+
+            self.tts.interrupt()
+            self._barge_in.set()
+            try:
+                self._turns.put_nowait(user_text)
+            except asyncio.QueueFull:
+                self._turns.get_nowait()
+                self._turns.put_nowait(user_text)
+
+    async def _on_sentence(self, sentence: str) -> None:
+        if self._barge_in.is_set():
+            return
+        await self.tts.speak(sentence)
+
+    async def _respond_loop(self) -> None:
+        while self.is_running:
+            try:
+                user_text = await self._turns.get()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.debug("Turn wait error: %s", e)
+                continue
+
+            self._barge_in.clear()
+            try:
+                await self.llm.stream_into(user_text, self._on_sentence)
+            except asyncio.CancelledError:
+                break
             except Exception as e:
                 logger.debug("Processing error: %s", e)
-    
+
     async def run(self):
         self.is_running = True
         logger.info("Connecting to ASR")
-        self.asr.connect()
+        await self.asr.connect()
         logger.info("Connected to ASR")
-        
-        
+
         logger.info("Agent Greeting to user.")
-        await self.tts.speak("Maani Bro how are you, what are you up to ?")
-        
-        
-        p = pyaudio.PyAudio()
-        audio_stream = p.open(
-            format=pyaudio.paInt16,
-            channels=1,
-            rate=asr_config.sample_rate,
-            input=True,
-            frames_per_buffer=asr_config.frames_per_buffer,
-        )
-        
+        await self.tts.speak("Hi there, How can i help you today?")
+
+        loop = asyncio.get_running_loop()
+        mic = threading.Thread(target=self._mic_thread, args=(loop,), daemon=True)
+        mic.start()
+
         logger.info("Listening... Speak into your mic. Press Ctrl+C to stop.")
-                
+
+        pump = asyncio.create_task(self._pump_audio())
+        turn_task = asyncio.create_task(self._turn_loop())
+        respond_task = asyncio.create_task(self._respond_loop())
+
         try:
-            processor_task = asyncio.create_task(self.process_turns())
-            
             while self.is_running:
-                try:
-                    data = audio_stream.read(
-                        asr_config.frames_per_buffer,
-                        exception_on_overflow=False
-                    )
-                    self.asr.stream_audio(data)
-                    await asyncio.sleep(0.001)
-                    
-                except KeyboardInterrupt:
-                    break
-                
+                await asyncio.sleep(0.2)
+                if self._mic_error:
+                    raise self._mic_error
         finally:
             self.is_running = False
-            audio_stream.stop_stream()
-            audio_stream.close()
-            p.terminate()
-            self.asr.disconnect()
-            processor_task.cancel()
-            await processor_task
+            # Cancel before awaiting: the pump is parked on _frames.get() and
+            # would never notice is_running flipping on its own.
+            tasks = (pump, turn_task, respond_task)
+            for t in tasks:
+                t.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            mic.join(timeout=2)
+            await self.asr.disconnect()
+            if self._mic_error:
+                raise self._mic_error
+
 
 def main():
     agent = VoiceAgent()
-    asyncio.run(agent.run())
+    try:
+        asyncio.run(agent.run())
+    except KeyboardInterrupt:
+        logger.info("Stopped.")
+
 
 if __name__ == "__main__":
     main()

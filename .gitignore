@@ -26,3 +26,5 @@ jargons.md
 .idea/
 .vscode/
 .DS_Store
+# Local planning notes
+implementation.md

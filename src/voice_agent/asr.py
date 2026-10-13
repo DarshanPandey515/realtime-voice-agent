@@ -1,10 +1,8 @@
-import os
-import queue
 import asyncio
-import threading
+import logging
 from dotenv import load_dotenv
 from assemblyai.streaming.v3 import (
-    RealTimeTranscriber,
+    AsyncRealTimeTranscriber,
     RealTimeTranscriberOptions,
     RealTimeParameters,
     RealTimeEvents,
@@ -13,8 +11,6 @@ from assemblyai.streaming.v3 import (
     RealTimeError,
 )
 from voice_agent.config import asr_config
-import logging
-
 
 load_dotenv()
 
@@ -23,61 +19,70 @@ logger = logging.getLogger(__name__)
 
 
 class StreamingASR:
-    
+
     def __init__(self):
-        self.transcriber = RealTimeTranscriber(
+        self.transcriber = AsyncRealTimeTranscriber(
             options=RealTimeTranscriberOptions(),
             api_key=asr_config.api_key
         )
-        
-        self.turn_queue = asyncio.Queue()
+        # maxsize=1, drop-oldest: someone talking over the agent should get
+        # their newest turn answered, not a backlog of stale ones.
+        self.turn_queue = asyncio.Queue(maxsize=1)
         self.is_running = False
-        self._connected = threading.Event()
+        self._connected = asyncio.Event()
 
         self.transcriber.on(RealTimeEvents.Begin, self.on_open)
         self.transcriber.on(RealTimeEvents.Turn, self.on_turn)
         self.transcriber.on(RealTimeEvents.Error, self.on_error)
-    
-    
-    def on_open(self, client, event: BeginEvent):
+
+
+    async def on_open(self, client, event: BeginEvent):
         self.is_running = True
         self._connected.set()
         logger.info("session: %s started", event.id)
-        
-
-    def on_turn(self, client, event: TurnEvent):
-        if event.transcript and event.end_of_turn:
-            self.turn_queue.put_nowait(event.transcript)
-            logger.info("user: %s", event.transcript)
 
 
-    def on_error(self, client, error: RealTimeError):
+    async def on_turn(self, client, event: TurnEvent):
+        if not (event.transcript and event.end_of_turn):
+            return
+        logger.info("user: %s", event.transcript)
+        if self.turn_queue.full():
+            self.turn_queue.get_nowait()
+        await self.turn_queue.put(event.transcript)
+
+
+    async def on_error(self, client, error: RealTimeError):
         logger.info("ASR Error: %s", error)
-        
-    
-    def connect(self, timeout: float = 30.0):
+
+
+    async def connect(self, timeout: float = 30.0):
         params = RealTimeParameters(
             sample_rate=asr_config.sample_rate,
             speech_model=asr_config.model
         )
         self._connected.clear()
-        self.transcriber.connect(params)
-        if not self._connected.wait(timeout=timeout):
+        await self.transcriber.connect(params)
+        # connect() dispatches the error event and returns quietly when the
+        # handshake is rejected, so waiting for Begin is the real success check.
+        try:
+            await asyncio.wait_for(self._connected.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            await self.disconnect()
             raise TimeoutError(
                 f"ASR session did not open within {timeout}s"
             )
-        
-        
+
+
     async def get_next_turn(self):
         return await self.turn_queue.get()
-    
-    
-    def stream_audio(self, data):
+
+
+    async def stream_audio(self, data):
         if self.is_running:
-            self.transcriber.stream(data)
-            
-            
-    def disconnect(self):
+            await self.transcriber.stream(data)
+
+
+    async def disconnect(self):
         self.is_running = False
         self._connected.clear()
-        self.transcriber.disconnect(terminate=True)
+        await self.transcriber.disconnect(terminate=True)

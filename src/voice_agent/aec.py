@@ -24,7 +24,8 @@ class EchoCancellation:
     runs dry.
     """
 
-    def __init__(self, sample_rate: int, reference_ms: int = 1000):
+    def __init__(self, sample_rate: int, reference_ms: int = 1000,
+                 stream_delay_ms: int = 0):
         self.sample_rate = sample_rate
         # Keep more reference than one chunk so AEC3 has history to estimate
         # delay against, even if playback pauses.
@@ -38,6 +39,7 @@ class EchoCancellation:
             noise_suppression=False,
             high_pass_filter=True,
             auto_gain_control=False,
+            stream_delay_ms=stream_delay_ms,
         )
 
     def add_playback(self, pcm: bytes) -> None:

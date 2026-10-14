@@ -29,6 +29,9 @@ class TTSConfig:
     # resampling the reference on every chunk.
     output_format: str = "pcm_16000"
     sample_rate: int = 16000
+    # Output buffer size. The echo canceller needs the resulting playback
+    # delay as a hint, so this is derived rather than duplicated.
+    output_frames_per_buffer: int = 1024
     api_key: str = os.getenv("ELEVENLABS_API_KEY")
 
 

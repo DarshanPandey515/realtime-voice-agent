@@ -5,6 +5,7 @@ pairing in conversation history, and sentence splitting.
 """
 
 import asyncio
+import time
 
 import numpy as np
 import pytest
@@ -407,6 +408,7 @@ def test_tts_tees_playback_into_the_echo_canceller(monkeypatch):
     )
     tts._cancel = threading.Event()
     tts._echo = _Echo()
+    tts._play_lock = threading.Lock()
 
     monkeypatch.setattr(tts_mod.pyaudio, "PyAudio", _FakePa)
 
@@ -416,7 +418,105 @@ def test_tts_tees_playback_into_the_echo_canceller(monkeypatch):
     assert teed == [b"c1", b"c2"], "playback must be teed to the echo canceller"
 
 
-def test_tts_interrupt_stops_playback_before_the_last_chunk(monkeypatch):
+def test_playback_is_teed_before_it_is_written(monkeypatch):
+    """Ordering is load-bearing: recording after write() mistimes the far end.
+
+    write() blocks for the whole chunk, so a reference recorded afterwards is
+    timestamped to when playback ended rather than when it started, which
+    pushes the far end outside AEC3's delay search.
+    """
+    import threading
+    from types import SimpleNamespace
+
+    import voice_agent.tts as tts_mod
+    from voice_agent.tts import StreamingTTS
+
+    events = []
+
+    class _Echo:
+        def add_playback(self, pcm):
+            events.append(("tee", pcm))
+
+    class _Out:
+        def write(self, chunk):
+            events.append(("write", chunk))
+
+        def stop_stream(self):
+            pass
+
+        def close(self):
+            pass
+
+    class _FakePa:
+        def open(self, **kwargs):
+            return _Out()
+
+        def terminate(self):
+            pass
+
+    tts = StreamingTTS.__new__(StreamingTTS)
+    tts.client = SimpleNamespace(
+        text_to_speech=SimpleNamespace(stream=lambda **kw: iter([b"c1"]))
+    )
+    tts._cancel = threading.Event()
+    tts._echo = _Echo()
+    tts._play_lock = threading.Lock()
+    monkeypatch.setattr(tts_mod.pyaudio, "PyAudio", _FakePa)
+
+    tts._play_blocking("hello")
+
+    assert events == [("tee", b"c1"), ("write", b"c1")], events
+
+
+def test_only_one_output_stream_plays_at_a_time(monkeypatch):
+    """Overlapping streams interleave at the speaker and scramble the reference."""
+    import threading
+    from types import SimpleNamespace
+
+    import voice_agent.tts as tts_mod
+    from voice_agent.tts import StreamingTTS
+
+    state = {"open": 0, "peak": 0}
+
+    class _Out:
+        def write(self, chunk):
+            time.sleep(0.02)
+
+        def stop_stream(self):
+            pass
+
+        def close(self):
+            pass
+
+    class _FakePa:
+        def open(self, **kwargs):
+            state["open"] += 1
+            state["peak"] = max(state["peak"], state["open"])
+            return _Out()
+
+        def terminate(self):
+            state["open"] -= 1
+
+    tts = StreamingTTS.__new__(StreamingTTS)
+    tts.client = SimpleNamespace(
+        text_to_speech=SimpleNamespace(stream=lambda **kw: iter([b"a", b"b", b"c"]))
+    )
+    tts._cancel = threading.Event()
+    tts._echo = None
+    tts._play_lock = threading.Lock()
+    monkeypatch.setattr(tts_mod.pyaudio, "PyAudio", _FakePa)
+
+    threads = [threading.Thread(target=tts._play_blocking, args=(f"t{i}",))
+               for i in range(3)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert state["peak"] == 1, state
+
+
+def test_interrupt_during_playback_stops_it(monkeypatch):
     """Barge-in depends on the cancel flag being checked between chunks."""
     import threading
     from types import SimpleNamespace
@@ -437,11 +537,9 @@ def test_tts_interrupt_stops_playback_before_the_last_chunk(monkeypatch):
         def close(self):
             pass
 
-    out = _Out()
-
     class _FakePa:
         def open(self, **kwargs):
-            return out
+            return _Out()
 
         def terminate(self):
             pass
@@ -454,12 +552,68 @@ def test_tts_interrupt_stops_playback_before_the_last_chunk(monkeypatch):
     )
     tts._cancel = threading.Event()
     tts._echo = None
+    tts._play_lock = threading.Lock()
     monkeypatch.setattr(tts_mod.pyaudio, "PyAudio", _FakePa)
 
+    worker = threading.Thread(target=tts._play_blocking, args=("hello",))
+    worker.start()
+    worker.join(timeout=0.5)
+
+    # Interrupt while it is mid-stream.
     tts.interrupt()
+    worker.join(timeout=2)
+
+    assert worker.is_alive() is False
+
+
+def test_stale_interrupt_does_not_silence_the_next_utterance(monkeypatch):
+    """An interrupt aimed at a previous reply must not kill the reply after it.
+
+    The cancel flag is cleared once playback owns the device, which is what
+    makes clear-then-interrupt ordering safe without a race.
+    """
+    import threading
+    from types import SimpleNamespace
+
+    import voice_agent.tts as tts_mod
+    from voice_agent.tts import StreamingTTS
+
+    out = _CountingOut()
+
+    class _FakePa:
+        def open(self, **kwargs):
+            return out
+
+        def terminate(self):
+            pass
+
+    tts = StreamingTTS.__new__(StreamingTTS)
+    tts.client = SimpleNamespace(
+        text_to_speech=SimpleNamespace(stream=lambda **kw: iter([b"c1"]))
+    )
+    tts._cancel = threading.Event()
+    tts._echo = None
+    tts._play_lock = threading.Lock()
+    monkeypatch.setattr(tts_mod.pyaudio, "PyAudio", _FakePa)
+
+    tts.interrupt()          # left over from the previous turn
     tts._play_blocking("hello")
 
-    assert out.written == [], f"cancelled playback wrote {out.written}"
+    assert out.written == [b"c1"]
+
+
+class _CountingOut:
+    def __init__(self):
+        self.written = []
+
+    def write(self, chunk):
+        self.written.append(chunk)
+
+    def stop_stream(self):
+        pass
+
+    def close(self):
+        pass
 
 
 # ------------------------------------------------------------------ orchestration

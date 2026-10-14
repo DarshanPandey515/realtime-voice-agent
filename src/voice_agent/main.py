@@ -6,7 +6,7 @@ import pyaudio
 
 from voice_agent.aec import EchoCancellation
 from voice_agent.asr import StreamingASR
-from voice_agent.config import asr_config
+from voice_agent.config import asr_config, tts_config
 from voice_agent.llm import LLMAgent
 from voice_agent.tts import StreamingTTS
 
@@ -18,7 +18,15 @@ logger = logging.getLogger(__name__)
 class VoiceAgent:
 
     def __init__(self):
-        self.echo = EchoCancellation(asr_config.sample_rate)
+        self.echo = EchoCancellation(
+            asr_config.sample_rate,
+            # Playback buffer is the delay between us handing audio to the
+            # speaker and it reaching the room; AEC3 converges faster when told.
+            stream_delay_ms=round(
+                tts_config.output_frames_per_buffer
+                / tts_config.sample_rate * 1000
+            ),
+        )
         self.asr = StreamingASR()
         self.llm = LLMAgent()
         self.tts = StreamingTTS(echo=self.echo)

@@ -26,6 +26,12 @@ _SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+")
 # promise the agent does not keep, which is worse than silence - the user waits
 # for an answer that never comes. Measured on both models with the tool cap
 # engaged: turns ended on "Let me check..." or cut off mid-sentence.
+#
+# HOW OFTEN this happens is not established. Six tool-requiring prompts gave
+# one affected turn; the 95%% interval on 1-in-6 spans 0.4%%-64%%, which cannot
+# tell "occasional" from "one turn in three". Treat the rate as unknown until
+# a larger sample says otherwise, and revisit this filter then - if it is
+# nearer one-in-three, the fix belongs in the system prompt, not in the regex.
 _ACTIONS = ("check", "look", "search", "run", "read", "find", "see", "open",
             "inspect", "grab", "list", "grep")
 _SUBJECTS = ("let me", "i'll", "i will", "i'd", "i would", "i'm going to",

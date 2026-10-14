@@ -59,6 +59,31 @@ To re-tune the barge-in gate for your own mic, gain and room:
 uv run python scripts/calibrate_vad.py path/to/speech.wav
 ```
 
+## Verification status
+
+What each load-bearing claim rests on, and what it does not. This section exists
+because four separate errors in this project were all "a number from a path the
+agent does not use": the end-to-end figure that never opened a microphone, a
+residual metric that could not distinguish passthrough from cancellation, a raw
+TTFT probe that omitted the system prompt and tool schemas, and a counting
+script that double-counted what a filter had already dropped. None were caught by
+looking harder at the number. Each needed the question "what code path produced
+this, and does the agent use it?"
+
+| Claim | Rests on | Not established |
+|--------|----------|-----------------|
+| Echo cancellation is load-bearing | Offline test: raw synthetic echo drives the VAD gate on >50% of frames, AEC-cleaned on ~0% | Anything about a real room. Single delayed path, no reverb, no speaker |
+| ASR turn ~815 ms | Live, wall-clock-paced measurement against real AssemblyAI | Generalises beyond that clip and key |
+| Self-echo guard holds | Offline, up to ~30% transcription error | Echo degraded past recognition, where it cannot help at all |
+| Intent-narration filter | Offline classification tests | **How often narration occurs.** Observed once in six tool turns; the 95% interval spans 0.4–64%, which cannot separate "occasional" from "one in three" |
+| Tool loops are bounded | `request_limit` is checked before every request and is cumulative — read in pydantic-ai's source | **Not reproduced live.** The old cap was also source-verified and failed 9 and 15 calls against a limit of 6 |
+| Tool executions bounded at 6 | Our own counter inside the tool bodies | Does not shorten a turn — it only reduces subprocess work, shifting the run-length problem to `request_limit` |
+| Model choice is not the latency lever | Apples-to-apples through `LLMAgent`: 379 ms vs 318 ms, crossing maxes | n=4 per model; both are inside noise of each other |
+
+A claim here that is read from source has not been verified by behaviour, and the
+one time that distinction was ignored it produced a cap that silently did
+nothing.
+
 ## Known limits
 
 - Single turn queue and single response at a time — no overlap between turns.

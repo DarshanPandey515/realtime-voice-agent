@@ -366,6 +366,43 @@ def test_vad_threshold_is_the_documented_calibration_point():
     )
 
 
+def test_shipped_threshold_clears_the_measured_silence_ceiling():
+    """0.6 passed the loudest silence we measured; 0.5 must too, with margin."""
+    from voice_agent.config import asr_config
+
+    measured_silence_ceiling = 0.479        # scripts/calibrate_vad.py on a
+    assert asr_config.vad_threshold > measured_silence_ceiling
+
+
+def test_suggested_threshold_keys_off_the_ceiling_not_the_median():
+    """The rule: silence ceiling plus a share of the separation."""
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    from calibrate_vad import suggest_threshold
+
+    # Ceiling is high but median is low - the case that fooled the median.
+    silence = np.concatenate([np.full(60, 0.05), [0.479]])
+    speech = np.concatenate([np.full(50, 0.95), [0.574]])
+
+    got = suggest_threshold(silence, speech)
+    assert got > silence.max(), "must clear the loudest silence"
+    assert got <= speech.min(), "must not sit above the quietest speech"
+
+
+def test_suggested_threshold_returns_none_when_the_clip_overlaps():
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    from calibrate_vad import suggest_threshold
+
+    assert suggest_threshold(np.array([0.9, 0.95]), np.array([0.2, 0.3])) is None
+    assert suggest_threshold(np.array([]), np.array([0.5])) is None
+    assert suggest_threshold(np.array([0.1]), np.array([])) is None
+
+
 # ------------------------------------------------------------------ self-echo
 
 def test_warmup_window_is_treated_as_echo():

@@ -16,13 +16,17 @@ class ASRConfig:
     # turn.
     #
     # Measured on one 16kHz clip, close-talking: silence frames peak at 0.438,
-    # speech frames run 0.503 (min) / 0.634 (p10) / 0.762 (p25) / 0.952 (p50).
-    # 0.6 sits above speech p10, so it misses the quietest speech frames and
-    # gets worse with distance - at -20 dB gain, speech p10 falls to 0.530.
-    # That is a deliberate trade: onset gating absorbs false positives, so the
-    # threshold leans toward recall. Re-measure on your own mic before trusting
-    # it elsewhere.
-    vad_threshold: float = 0.6
+    # speech runs 0.503 (min) / 0.634 (p10) / 0.762 (p25) / 0.952 (p50).
+    # The threshold is set against the silence *ceiling* plus margin, not
+    # against medians: anything near 0.6 sits above speech p10 and drops the
+    # quietest speech frames while the noisiest silence still clears it. At
+    # -20 dB gain (soft or distant speaker) speech p10 falls to 0.530, so this
+    # margin does not survive much distance. Onset gating absorbs false
+    # positives, which lets the threshold lean toward recall.
+    #
+    # Re-measure per device with scripts/calibrate_vad.py; the distribution
+    # shifts with mic, gain and room before anything else changes.
+    vad_threshold: float = 0.5
     vad_onset_frames: int = 2
     
     
@@ -40,13 +44,13 @@ class AECConfig:
     # How long after playback begins a turn is distrusted. AEC needs a
     # converged far-end reference and has none at t=0.
     #
-    # UNCALIBRATED. 300ms was a guess, not a measurement. A synthetic room
-    # (scaled, delayed copy of the reference) gave 34 dB steady-state but
-    # near-zero or negative suppression for the first half second - though a
-    # second run of the same harness diverged permanently, so the harness is
-    # not trustworthy enough to set this number from. Treat it as the knob to
-    # raise if the first utterance leaks. Dropping turns here costs a genuine
-    # barge-in that early.
+    # MEASURED, on a synthetic echo path (scaled, 12 ms-delayed copy of the
+    # reference): chunks 150-400 ms after playback starts suppress only
+    # 1-15 dB, then recover to 50-70 dB from ~400 ms. 300 sits inside that
+    # dead window. Synthetic and single-path, so treat it as evidence for the
+    # order of magnitude rather than a tuning constant.
+    #
+    # Dropping turns here costs a genuine barge-in that early.
     warmup_ms: int = 300
     # Similarity above which an incoming transcript is treated as the agent
     # repeating itself rather than the user speaking.

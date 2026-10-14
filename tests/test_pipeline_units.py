@@ -253,9 +253,13 @@ class _FakeAgent:
 
 
 def _fake_llm(chunks, messages=()):
-    from voice_agent.llm import LLMAgent
+    from voice_agent.config import llm_config
+    from voice_agent.llm import LLMAgent, _tool_call_counter
     llm = LLMAgent.__new__(LLMAgent)
     llm._turns = []
+    llm._tool_calls = [0]
+    llm._check_tool_call = _tool_call_counter(llm_config.tool_call_limit,
+                                              llm._tool_calls)
     llm.agent = _FakeAgent(_FakeStreamResult(chunks, list(messages)))
     return llm
 
@@ -392,6 +396,55 @@ def test_a_real_answer_is_not_replaced():
     asyncio.run(run())
 
     assert spoken == ["There are nine Python files."], spoken
+
+
+def test_our_own_tool_cap_counts_calls_the_librarys_does_not():
+    """Regression test for an observed breach: 9 and 15 calls against limit 6.
+
+    pydantic-ai only increments usage.tool_calls after a tool executes
+    successfully. The validation-error, ModelRetry and ToolFailed paths all
+    raise earlier than that, and each still advances the model conversation,
+    so the library counter can stay frozen while the run loops. Our counter
+    lives in the tool body, so it sees every call that actually runs.
+    """
+    from voice_agent.llm import ToolCallLimitReached, _tool_call_counter
+    from voice_agent.config import llm_config
+
+    counter = [0]
+    check = _tool_call_counter(llm_config.tool_call_limit, counter)
+
+    for _ in range(llm_config.tool_call_limit):
+        check()                       # must not raise within budget
+    with pytest.raises(ToolCallLimitReached):
+        check()
+    assert counter[0] == llm_config.tool_call_limit + 1
+
+
+def test_our_tool_cap_is_per_turn_not_per_session():
+    """A long conversation must not exhaust a budget that is meant to be per turn."""
+    from voice_agent.llm import ToolCallLimitReached, _tool_call_counter
+    from voice_agent.config import llm_config
+
+    counter = [0]
+    check = _tool_call_counter(llm_config.tool_call_limit, counter)
+    for turn in range(5):
+        counter[0] = 0               # what stream_into does per turn
+        for _ in range(llm_config.tool_call_limit):
+            check()
+        with pytest.raises(ToolCallLimitReached):
+            check()
+
+
+def test_agent_tools_call_the_counter():
+    """The guard is only real if the registered tools go through it."""
+    import inspect
+
+    from voice_agent.llm import LLMAgent
+
+    src = inspect.getsource(LLMAgent.register_tools)
+    assert src.count("self._check_tool_call()") == 3, (
+        "all three registered tools must be counted"
+    )
 
 
 def test_tool_loops_are_capped():

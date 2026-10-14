@@ -56,6 +56,29 @@ def is_intent_narration(sentence: str) -> bool:
     return any(idiom in head for idiom in _INTENT_IDIOM)
 
 
+class ToolCallLimitReached(RuntimeError):
+    """Raised when one turn makes more tool calls than we allow.
+
+    pydantic-ai's own `tool_calls_limit` is not sufficient here. It increments
+    `usage.tool_calls` only *after* a tool executes successfully
+    (tool_manager.py:1031); the argument-validation, ModelRetry and ToolFailed
+    paths all return or raise before that line. Each of those still advances
+    the model conversation, so a model stuck emitting invalid tool arguments
+    loops with the counter frozen and the limit never trips. Observed: 9 and 15
+    calls against a limit of 6, with no exception raised.
+    """
+
+
+def _tool_call_counter(limit: int, counter: list[int]):
+    """Return a callable that trips once a turn exceeds `limit` tool calls."""
+    def check() -> None:
+        counter[0] += 1
+        if counter[0] > limit:
+            raise ToolCallLimitReached(
+                f"{counter[0]} tool calls in one turn (limit {limit})")
+    return check
+
+
 def split_sentences(buf: str) -> tuple[list[str], str]:
     """Pull complete sentences off the front of buf. Returns (sentences, tail)."""
     sentences = []
@@ -102,21 +125,27 @@ class LLMAgent:
         # response plus any tool calls, and slicing a flat list cuts a
         # ToolCallPart away from its ToolReturnPart.
         self._turns = []
+        self._tool_calls = [0]
+        self._check_tool_call = _tool_call_counter(
+            llm_config.tool_call_limit, self._tool_calls)
 
     def register_tools(self):
         @self.agent.tool
         async def bash_tool(ctx: RunContext, command: str) -> str:
             """Run a read-only shell command (e.g. ls, cat, grep, git status) and return its output."""
+            self._check_tool_call()
             return await BashTool.execute_command(command)
 
         @self.agent.tool
         async def readfile_tool(ctx: RunContext, path: str) -> str:
             """Read the contents of a text file at the given path."""
+            self._check_tool_call()
             return await ReadFileTool.readfile(path)
 
         @self.agent.tool
         async def get_tree_tool(ctx: RunContext) -> str:
             """List the files in the current project directory."""
+            self._check_tool_call()
             return await GetTreeTool.get_tree()
 
     @property
@@ -145,6 +174,7 @@ class LLMAgent:
         abandoned on barge-in raises out of its own `async with`.
         """
         buf = ""
+        self._tool_calls[0] = 0          # the cap is per turn, not per session
         async with self.agent.run_stream(
             user_text,
             message_history=self.history,

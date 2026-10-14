@@ -10,7 +10,11 @@ from pydantic_ai.exceptions import UsageLimitExceeded
 from voice_agent.aec import EchoCancellation
 from voice_agent.asr import StreamingASR
 from voice_agent.config import asr_config, llm_config, tts_config
-from voice_agent.llm import LLMAgent, is_intent_narration
+from voice_agent.llm import (
+    LLMAgent,
+    ToolCallLimitReached,
+    is_intent_narration,
+)
 from voice_agent.tts import StreamingTTS
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -157,9 +161,8 @@ class VoiceAgent:
                 await self.llm.stream_into(user_text, self._on_sentence)
             except asyncio.CancelledError:
                 break
-            except UsageLimitExceeded:
-                logger.warning("turn hit the %d tool-call cap",
-                               llm_config.tool_call_limit)
+            except (UsageLimitExceeded, ToolCallLimitReached) as e:
+                logger.warning("turn hit a tool-call cap: %s", e)
                 await self.tts.speak(
                     "I went round in circles looking into that. "
                     "Can you narrow the question down?")

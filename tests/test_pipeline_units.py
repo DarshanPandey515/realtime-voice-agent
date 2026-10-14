@@ -61,11 +61,28 @@ def test_rejects_dangerous_commands(command, fragment):
     "find . -name '*.py'",
     "ls -la",
     "pwd",
+    # Display-only flags: refusing these made the model report that its
+    # shell access was restricted, on a command that writes nothing.
+    "git log -1 --pretty=%s",
+    "git log --format=%h %s",
+    "git log --no-pager -3",
 ])
 def test_allows_readonly_commands(command):
     args = command.split()
     reason = _rejection_reason(args[0], args)
     assert reason is None, f"{command!r} should be allowed, got {reason!r}"
+
+
+def test_a_refusal_suggests_a_working_alternative():
+    """A bare refusal reads as a broken tool; the model then gives up."""
+    import shlex
+
+    from voice_agent.tools import _rejection_reason
+
+    reason = _rejection_reason(*[shlex.split("git log --exec-path=/tmp/x")])
+    assert reason and "git log --oneline" in reason, (
+        "the refusal should hand back a command that would work"
+    )
 
 
 def test_runs_a_command_for_real():

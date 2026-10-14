@@ -31,6 +31,10 @@ READONLY_GIT_FLAGS = {
     "--max-count", "--author", "--committer", "--since", "--after",
     "--until", "--before", "--grep", "-i", "--ignore-case", "-S",
     "--date", "--abbrev-commit", "--no-abbrev-commit", "--short",
+    # Output formatting and pager control. These only change what git prints,
+    # and refusing them pushed the model into "my shell access is
+    # restricted" on a harmless `git log -1 --pretty=%s`.
+    "--pretty", "--format", "--no-pager", "--topo-order", "--first-parent",
 }
 
 # `find` takes a command to run or a list of things to erase. These flags are
@@ -77,7 +81,10 @@ def _rejection_reason(base_cmd: str, args: list[str]) -> str | None:
             name = arg.split("=", 1)[0]
             if arg.startswith("-") and name not in READONLY_GIT_FLAGS \
                     and not arg[1:].isdigit():
-                return f"'git {arg}' isn't on my read-only list, so I won't run it."
+                return (
+                    f"'git {arg}' isn't on my read-only list, so I won't run "
+                    "it. Try a plainer command like `git log --oneline -5`."
+                )
 
     if base_cmd == "find":
         for arg in rest:

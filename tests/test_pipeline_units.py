@@ -73,13 +73,19 @@ def test_allows_readonly_commands(command):
     assert reason is None, f"{command!r} should be allowed, got {reason!r}"
 
 
-def test_a_refusal_suggests_a_working_alternative():
-    """A bare refusal reads as a broken tool; the model then gives up."""
+def _split_git(command):
+    """(base_cmd, args) for _rejection_reason."""
     import shlex
 
+    args = shlex.split(command)
+    return args[0], args
+
+
+def test_a_refusal_suggests_a_working_alternative():
+    """A bare refusal reads as a broken tool; the model then gives up."""
     from voice_agent.tools import _rejection_reason
 
-    reason = _rejection_reason(*[shlex.split("git log --exec-path=/tmp/x")])
+    reason = _rejection_reason(*_split_git("git log --exec-path=/tmp/x"))
     assert reason and "git log --oneline" in reason, (
         "the refusal should hand back a command that would work"
     )

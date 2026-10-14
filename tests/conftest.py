@@ -6,6 +6,18 @@ from pathlib import Path
 
 import pytest
 
+# Premise assertions.
+#
+# For any test whose subject is a limit, a gate, a filter or a detector:
+# assert the subject is actually firing before asserting what happens when
+# it does. A limit test that passes because the limit never triggered is
+# indistinguishable from a correct one, and this project has paid for that
+# twice - an end-to-end figure that never opened a microphone, and a runaway
+# harness whose stream function yielded text alongside the tool call so the
+# loop silently stopped and four limit tests passed vacuously.
+#
+# The remedy is cheap: make the fixture prove it can produce the condition
+# the test is about, on the same fixture, in the same test.
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 RESULTS_DIR = PROJECT_ROOT / "reports"
 RESULTS_FILE = RESULTS_DIR / "latency_results.json"

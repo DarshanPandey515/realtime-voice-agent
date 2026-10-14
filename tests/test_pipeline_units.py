@@ -349,6 +349,8 @@ def test_real_answers_are_still_spoken(sentence):
 
 def test_a_turn_of_only_promises_gets_an_answer_instead():
     """The measured failure: the turn ends on 'Let me check...' and stops."""
+    import voice_agent.main as main_mod
+
     agent = _bare_agent()
     agent._said_anything = False
     agent.llm = type("L", (), {"stream_into": staticmethod(
@@ -368,9 +370,43 @@ def test_a_turn_of_only_promises_gets_an_answer_instead():
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
 
-    asyncio.run(run())
+    # Premise: with the filter disabled this exact sentence WOULD reach the
+    # speaker. Without this, a filter broken in the other direction - one that
+    # drops everything - passes the test below looking identical to a correct
+    # filter.
+    original = main_mod.is_intent_narration
+    main_mod.is_intent_narration = lambda s: False
+    try:
+        asyncio.run(run())
+    finally:
+        main_mod.is_intent_narration = original
 
-    assert spoken == ["I couldn't find that. Try asking differently."], spoken
+    assert spoken == ["Let me check that for you."], (
+        "premise: the promise reaches the speaker when nothing filters it"
+    )
+
+    # And with the filter on, the user gets an answer instead.
+    agent2 = _bare_agent()
+    agent2._said_anything = False
+    agent2.llm = type("L", (), {"stream_into": staticmethod(
+        lambda text, cb: cb("Let me check that for you."))})()
+    spoken2 = []
+
+    async def fake_speak2(text):
+        spoken2.append(text)
+
+    agent2.tts.speak = fake_speak2
+
+    async def run2():
+        await agent2._turns.put("what's the commit?")
+        task = asyncio.create_task(agent2._respond_loop())
+        await asyncio.sleep(0.05)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(run2())
+
+    assert spoken2 == ["I couldn't find that. Try asking differently."], spoken2
 
 
 def test_a_real_answer_is_not_replaced():
@@ -644,6 +680,16 @@ def test_aec_reduces_vad_firing_on_synthetic_echo():
     from voice_agent.config import asr_config
 
     pairs = _echo_capture()
+
+    # Premise, on the same fixture: without AEC this input drives the gate.
+    # If the synthetic echo stopped resembling the agent's voice, the
+    # assertion below would hold vacuously and look identical to a pass.
+    raw_fired = _vad_fires([c for c, _ in pairs], asr_config.vad_threshold)
+    assert raw_fired > len(pairs) * 0.2, (
+        f"premise: AEC has something to remove, but raw echo only fired "
+        f"{raw_fired}/{len(pairs)} frames"
+    )
+
     aec = EchoCancellation(sample_rate=16000, stream_delay_ms=64)
     cleaned = []
     for capture, far in pairs:

@@ -92,6 +92,10 @@ class VoiceAgent:
                 logger.debug("Turn error: %s", e)
                 continue
 
+            if self.tts.is_self_echo(user_text):
+                logger.info("ignoring probable self-echo: %s", user_text)
+                continue
+
             self.tts.interrupt()
             self._barge_in.set()
             try:

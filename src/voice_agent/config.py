@@ -21,6 +21,20 @@ class LLMConfig:
 
 
 @dataclass
+class AECConfig:
+    # AEC needs a converged far-end reference. For the first stretch of speech
+    # after playback begins, a turn that arrives is more likely the agent
+    # hearing itself than the user talking, so turns are not acted on. The
+    # cost is that a genuine barge-in inside this window is missed.
+    warmup_ms: int = 300
+    # Similarity above which an incoming transcript is treated as the agent
+    # repeating itself rather than the user speaking.
+    echo_match_ratio: float = 0.6
+    # How many of the most recent spoken sentences to compare against.
+    echo_history: int = 3
+
+
+@dataclass
 class TTSConfig:
     voice_id: str = "JBFqnCBsd6RMkjVDRZzb"
     model_id: str = "eleven_flash_v2_5"
@@ -39,3 +53,4 @@ class TTSConfig:
 asr_config = ASRConfig()
 llm_config = LLMConfig()
 tts_config = TTSConfig()
+aec_config = AECConfig()

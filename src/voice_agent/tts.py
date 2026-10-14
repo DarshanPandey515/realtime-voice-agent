@@ -1,8 +1,12 @@
 import asyncio
+import difflib
 import threading
+import time
+from collections import deque
+
 import pyaudio
 from elevenlabs.client import ElevenLabs
-from voice_agent.config import tts_config
+from voice_agent.config import aec_config, tts_config
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -20,6 +24,32 @@ class StreamingTTS:
         # Two output streams on one device interleave at the speaker, and they
         # also scramble the far-end reference the echo canceller depends on.
         self._play_lock = threading.Lock()
+        self._spoken = deque(maxlen=aec_config.echo_history)
+        self._playback_started_at = 0.0
+
+
+    def is_self_echo(self, text: str, now: float | None = None) -> bool:
+        """True if `text` is more likely the agent hearing itself.
+
+        Two guards, because echo cancellation alone is not enough to stop the
+        feedback loop. The first window after playback starts is the leakiest,
+        since AEC has no converged reference yet. After that, the guard is
+        literal: does this transcript match something we just said?
+
+        ponytail: a ratio threshold, not an acoustic test. A user who says
+        something close to the agent's last sentence gets dropped and has to
+        repeat themselves. Raise aec_config.echo_match_ratio to be stricter.
+        """
+        now = time.monotonic() if now is None else now
+        if self._playback_started_at and \
+                (now - self._playback_started_at) * 1000 < aec_config.warmup_ms:
+            return True
+
+        spoken = " ".join(self._spoken).lower()
+        if not spoken:
+            return False
+        return difflib.SequenceMatcher(None, text.lower(), spoken).ratio() > \
+            aec_config.echo_match_ratio
 
 
     async def speak(self, text: str) -> None:
@@ -35,6 +65,8 @@ class StreamingTTS:
             # Clear here, not in speak(): holding the lock means nobody else is
             # playing, so an interrupt() can no longer race this clear.
             self._cancel.clear()
+            self._playback_started_at = time.monotonic()
+            self._spoken.append(text)
             p = pyaudio.PyAudio()
             stream = None
             try:

@@ -14,6 +14,21 @@ from voice_agent.aec import EchoCancellation
 from voice_agent.tools import BashTool, MAX_CONTENT, _rejection_reason
 
 
+def _bare_tts():
+    """StreamingTTS without __init__, which would open a real speaker."""
+    import threading
+    from collections import deque
+
+    from voice_agent.tts import StreamingTTS
+    tts = StreamingTTS.__new__(StreamingTTS)
+    tts._cancel = threading.Event()
+    tts._echo = None
+    tts._play_lock = threading.Lock()
+    tts._spoken = deque(maxlen=3)
+    tts._playback_started_at = 0.0
+    return tts
+
+
 # ------------------------------------------------------------------ allowlist
 
 @pytest.mark.parametrize("command,fragment", [
@@ -299,6 +314,44 @@ def test_generate_response_joins_sentences():
     assert out == "Hello there. Second part."
 
 
+# ------------------------------------------------------------------ self-echo
+
+def test_warmup_window_is_treated_as_echo():
+    import time
+    from voice_agent.config import aec_config
+
+    tts = _bare_tts()
+    tts._playback_started_at = time.monotonic()
+    assert tts.is_self_echo("stop", now=tts._playback_started_at + 0.01) is True
+
+
+def test_turns_are_trusted_again_after_warmup():
+    import time
+    from voice_agent.config import aec_config
+
+    tts = _bare_tts()
+    tts._playback_started_at = time.monotonic()
+    later = tts._playback_started_at + aec_config.warmup_ms / 1000 + 0.1
+    assert tts.is_self_echo("what does this project do", now=later) is False
+
+
+def test_repeated_sentence_is_dropped_as_echo():
+    tts = _bare_tts()
+    tts._spoken.append("The project builds a real-time voice assistant.")
+    assert tts.is_self_echo("The project builds a real time voice assistant") is True
+
+
+def test_unrelated_speech_is_not_dropped():
+    tts = _bare_tts()
+    tts._spoken.append("The project builds a real-time voice assistant.")
+    assert tts.is_self_echo("what time is my meeting tomorrow") is False
+
+
+def test_nothing_spoken_means_nothing_to_match():
+    tts = _bare_tts()
+    assert tts.is_self_echo("hello there") is False
+
+
 # ------------------------------------------------------------------ echo
 
 def _rms(x):
@@ -363,61 +416,6 @@ def test_echo_canceller_reset_clears_history():
     assert len(aec._reference) == 0
 
 
-def test_tts_tees_playback_into_the_echo_canceller(monkeypatch):
-    """Without the tee AEC has no far-end reference and does nothing."""
-    import threading
-    from types import SimpleNamespace
-
-    import voice_agent.tts as tts_mod
-    from voice_agent.tts import StreamingTTS
-
-    teed = []
-
-    class _Echo:
-        def add_playback(self, pcm):
-            teed.append(pcm)
-
-    class _Out:
-        def __init__(self):
-            self.written = []
-
-        def write(self, chunk):
-            self.written.append(chunk)
-
-        def stop_stream(self):
-            pass
-
-        def close(self):
-            pass
-
-    out = _Out()
-
-    class _FakePa:
-        def __init__(self):
-            pass
-
-        def open(self, **kwargs):
-            return out
-
-        def terminate(self):
-            pass
-
-    tts = StreamingTTS.__new__(StreamingTTS)
-    tts.client = SimpleNamespace(
-        text_to_speech=SimpleNamespace(stream=lambda **kw: iter([b"c1", b"c2"]))
-    )
-    tts._cancel = threading.Event()
-    tts._echo = _Echo()
-    tts._play_lock = threading.Lock()
-
-    monkeypatch.setattr(tts_mod.pyaudio, "PyAudio", _FakePa)
-
-    tts._play_blocking("hello")
-
-    assert out.written == [b"c1", b"c2"]
-    assert teed == [b"c1", b"c2"], "playback must be teed to the echo canceller"
-
-
 def test_playback_is_teed_before_it_is_written(monkeypatch):
     """Ordering is load-bearing: recording after write() mistimes the far end.
 
@@ -454,13 +452,11 @@ def test_playback_is_teed_before_it_is_written(monkeypatch):
         def terminate(self):
             pass
 
-    tts = StreamingTTS.__new__(StreamingTTS)
+    tts = _bare_tts()
+    tts._echo = _Echo()
     tts.client = SimpleNamespace(
         text_to_speech=SimpleNamespace(stream=lambda **kw: iter([b"c1"]))
     )
-    tts._cancel = threading.Event()
-    tts._echo = _Echo()
-    tts._play_lock = threading.Lock()
     monkeypatch.setattr(tts_mod.pyaudio, "PyAudio", _FakePa)
 
     tts._play_blocking("hello")
@@ -497,13 +493,10 @@ def test_only_one_output_stream_plays_at_a_time(monkeypatch):
         def terminate(self):
             state["open"] -= 1
 
-    tts = StreamingTTS.__new__(StreamingTTS)
+    tts = _bare_tts()
     tts.client = SimpleNamespace(
         text_to_speech=SimpleNamespace(stream=lambda **kw: iter([b"a", b"b", b"c"]))
     )
-    tts._cancel = threading.Event()
-    tts._echo = None
-    tts._play_lock = threading.Lock()
     monkeypatch.setattr(tts_mod.pyaudio, "PyAudio", _FakePa)
 
     threads = [threading.Thread(target=tts._play_blocking, args=(f"t{i}",))
@@ -544,15 +537,12 @@ def test_interrupt_during_playback_stops_it(monkeypatch):
         def terminate(self):
             pass
 
-    tts = StreamingTTS.__new__(StreamingTTS)
+    tts = _bare_tts()
     tts.client = SimpleNamespace(
         text_to_speech=SimpleNamespace(
             stream=lambda **kw: iter([b"c1", b"c2", b"c3"])
         )
     )
-    tts._cancel = threading.Event()
-    tts._echo = None
-    tts._play_lock = threading.Lock()
     monkeypatch.setattr(tts_mod.pyaudio, "PyAudio", _FakePa)
 
     worker = threading.Thread(target=tts._play_blocking, args=("hello",))
@@ -587,13 +577,10 @@ def test_stale_interrupt_does_not_silence_the_next_utterance(monkeypatch):
         def terminate(self):
             pass
 
-    tts = StreamingTTS.__new__(StreamingTTS)
+    tts = _bare_tts()
     tts.client = SimpleNamespace(
         text_to_speech=SimpleNamespace(stream=lambda **kw: iter([b"c1"]))
     )
-    tts._cancel = threading.Event()
-    tts._echo = None
-    tts._play_lock = threading.Lock()
     monkeypatch.setattr(tts_mod.pyaudio, "PyAudio", _FakePa)
 
     tts.interrupt()          # left over from the previous turn
@@ -629,6 +616,9 @@ class _FakeTTS:
 
     def interrupt(self):
         self.interrupts += 1
+
+    def is_self_echo(self, text, now=None):
+        return False
 
 
 def _bare_agent():

@@ -48,9 +48,16 @@ Covers the bash allowlist, output capping, turn-based history, sentence splittin
 cancellation, self-echo rejection, and both barge-in paths. The latency suite needs keys
 and, for a real ASR turn number, a 16 kHz mono wav via `ASR_AUDIO_FILE`.
 
-None of these tests can prove the echo cancellation works. They cover the plumbing
-around it; whether AEC actually cancels depends on the room, and that needs a human with
-a speaker.
+The self-echo loop is covered offline, against a synthetic far-field echo: with AEC
+off, the agent's own voice trips the VAD barge-in gate on over half of all frames and
+cuts itself off mid-word; with AEC on, that falls to zero. What the tests still cannot
+tell you is how well AEC performs in your actual room — that needs a speaker.
+
+To re-tune the barge-in gate for your own mic, gain and room:
+
+```bash
+uv run python scripts/calibrate_vad.py path/to/speech.wav
+```
 
 ## Known limits
 
@@ -65,7 +72,11 @@ a speaker.
   close to the agent's last sentence and your turn gets dropped; raise
   `aec_config.echo_match_ratio` to be stricter.
 - `asr_config.vad_threshold` and `aec_config.warmup_ms` are calibrated against one
-  microphone and one room. Both are the knobs to turn if it misbehaves for you.
+  microphone and one room. Both are the knobs to turn if it misbehaves for you, and
+  `scripts/calibrate_vad.py` measures the first from a clip.
+- The self-echo guard matches on text similarity. It holds to roughly 30% transcription
+  error, but echo degraded past the point where ASR recognises words at all is not
+  catchable this way — that case depends entirely on AEC having removed it first.
 - `find`/`grep` can stall a turn silently for up to 15 s; nothing tells the user it is
   waiting.
 - Tool calls can push a turn to tens of seconds, far past anything the latency table

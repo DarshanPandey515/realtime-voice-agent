@@ -32,6 +32,23 @@ class ASRConfig:
     
 @dataclass
 class LLMConfig:
+    # Left on gpt-oss-20b deliberately. Swapped to qwen/qwen3.8-27b and
+    # measured again, because a raw stream=True probe promised a much larger
+    # win than the agent actually gets:
+    #
+    #   raw Groq API, 6 short samples   gpt-oss p50 587 ms -> qwen p50 207 ms
+    #   through LLMAgent, 4 samples     gpt-oss p50 379 ms -> qwen p50 318 ms
+    #
+    # The probe omits the system prompt and the three tool schemas, and that
+    # prefill dominates. gpt-oss's reasoning phase overlaps it rather than
+    # adding to it, so most of the apparent advantage was measurement error -
+    # the same trap as the e2e figure that never opened a microphone. 16% with
+    # the maxes crossing is inside noise at this sample size, and qwen also
+    # answered a config.py question with no tool call at all, so there is no
+    # reason to pay for the swap.
+    #
+    # Model catalogs are key-tier dependent (llama-3.3-70b-versatile 404s here),
+    # so re-measure through the agent, not the raw endpoint, before switching.
     model: str = "groq:openai/gpt-oss-20b"
     api_key: str = os.getenv("GROQ_API_KEY")
     # Both models will happily call tools in a loop: measured 35 tool calls in

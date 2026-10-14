@@ -247,7 +247,7 @@ class _FakeAgent:
         self._result = result
         self.calls = []
 
-    def run_stream(self, prompt, message_history=None):
+    def run_stream(self, prompt, message_history=None, **kwargs):
         self.calls.append((prompt, message_history))
         return _FakeRun(self._result)
 
@@ -312,6 +312,29 @@ def test_generate_response_joins_sentences():
 
     out = asyncio.run(llm.generate_response("hi"))
     assert out == "Hello there. Second part."
+
+
+def test_tool_loops_are_capped():
+    """Measured 35 tool calls (107s) on gpt-oss and 21 (172s) on qwen3.8.
+
+    A turn like that is silence from the user's side, and it is how the run
+    that ended in a Groq 429 burned its quota.
+    """
+    import inspect
+
+    from voice_agent.config import llm_config
+    from voice_agent.llm import LLMAgent
+
+    source = inspect.getsource(LLMAgent.stream_into)
+    assert "usage_limits" in source, "stream_into must pass usage limits"
+    assert "tool_calls_limit" in source
+    assert llm_config.tool_call_limit <= 10, (
+        f"{llm_config.tool_call_limit} tool calls is already an unusable turn"
+    )
+    # pydantic-ai's own default leaves tool calls uncapped.
+    from pydantic_ai.usage import UsageLimits
+
+    assert UsageLimits().tool_calls_limit is None
 
 
 # ------------------------------------------------------------------ barge-in VAD

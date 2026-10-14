@@ -32,9 +32,15 @@ class ASRConfig:
     
 @dataclass
 class LLMConfig:
-    model: str = "groq:qwen/qwen3.8-27b"
-    reasoning_effort: str = "none"
+    model: str = "groq:openai/gpt-oss-20b"
     api_key: str = os.getenv("GROQ_API_KEY")
+    # Both models will happily call tools in a loop: measured 35 tool calls in
+    # one turn (107 s) on gpt-oss-20b and 21 (172 s) on qwen3.8-27b. Every tool
+    # call is a model request, so the pydantic-ai default of request_limit=50
+    # does not catch it and tool_calls_limit defaults to None. A turn that long
+    # is silence from the user's point of view, so cap it well below that.
+    tool_call_limit: int = 6
+    request_limit: int = 12
     
 
  

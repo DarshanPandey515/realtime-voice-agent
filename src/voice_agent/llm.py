@@ -4,6 +4,7 @@ import re
 
 from pydantic_ai.agent import Agent
 from pydantic_ai import RunContext
+from pydantic_ai.usage import UsageLimits
 from voice_agent.tools import BashTool, ReadFileTool, GetTreeTool
 from voice_agent.config import llm_config
 from dotenv import load_dotenv
@@ -111,7 +112,12 @@ class LLMAgent:
         """
         buf = ""
         async with self.agent.run_stream(
-            user_text, message_history=self.history
+            user_text,
+            message_history=self.history,
+            usage_limits=UsageLimits(
+                request_limit=llm_config.request_limit,
+                tool_calls_limit=llm_config.tool_call_limit,
+            ),
         ) as result:
             try:
                 async for delta in result.stream_text(delta=True, debounce_by=0.05):

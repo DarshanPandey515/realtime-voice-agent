@@ -8,7 +8,7 @@ from pywebrtc_audio import VoiceDetector
 
 from voice_agent.aec import EchoCancellation
 from voice_agent.asr import StreamingASR
-from voice_agent.config import asr_config, tts_config
+from voice_agent.config import asr_config, llm_config, tts_config
 from voice_agent.llm import LLMAgent
 from voice_agent.tts import StreamingTTS
 
@@ -149,7 +149,12 @@ class VoiceAgent:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.debug("Processing error: %s", e)
+                # A tool loop that trips the cap used to mean total silence for
+                # the length of it - up to nearly three minutes measured. Say
+                # something rather than leave the user talking to a wall.
+                logger.warning("reply failed after %d tool calls: %s",
+                               llm_config.tool_call_limit, e)
+                await self.tts.speak("That took too long. Try asking again.")
 
     async def run(self):
         self.is_running = True

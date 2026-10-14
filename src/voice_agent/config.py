@@ -51,13 +51,25 @@ class LLMConfig:
     # so re-measure through the agent, not the raw endpoint, before switching.
     model: str = "groq:openai/gpt-oss-20b"
     api_key: str = os.getenv("GROQ_API_KEY")
-    # Both models will happily call tools in a loop: measured 35 tool calls in
-    # one turn (107 s) on gpt-oss-20b and 21 (172 s) on qwen3.8-27b. Every tool
-    # call is a model request, so the pydantic-ai default of request_limit=50
-    # does not catch it and tool_calls_limit defaults to None. A turn that long
-    # is silence from the user's point of view, so cap it well below that.
+    # Tool loops are bounded by two different limits, because two different
+    # things need bounding and neither mechanism does both.
+    #
+    # tool_call_limit counts *executions*, in our own counter inside the tool
+    # bodies. The library's tool_calls_limit cannot: it increments only after
+    # a tool returns successfully (tool_manager.py:1031), while argument
+    # validation failures, ModelRetry and ToolFailed all raise before that
+    # line and still advance the conversation. Measured 9 and 15 calls against
+    # a limit of 6 with nothing raised.
+    #
+    # request_limit is the only thing that actually *stops* a run, because it
+    # is checked before every request and is cumulative. Tool-level limits
+    # cannot: raising from a tool is fed back to the model as a retry (measured
+    # 24 calls, worse than no cap), and returning a refusal is simply ignored
+    # (24 attempts, 18 of them refusals). So this is the runaway brake, and it
+    # has to sit above what a legitimate turn needs - roughly one request per
+    # tool round, and tools are often issued several at once.
     tool_call_limit: int = 6
-    request_limit: int = 12
+    request_limit: int = 10
     
 
  

@@ -254,12 +254,12 @@ class _FakeAgent:
 
 def _fake_llm(chunks, messages=()):
     from voice_agent.config import llm_config
-    from voice_agent.llm import LLMAgent, _tool_call_counter
+    from voice_agent.llm import LLMAgent, _tool_call_budget
     llm = LLMAgent.__new__(LLMAgent)
     llm._turns = []
     llm._tool_calls = [0]
-    llm._check_tool_call = _tool_call_counter(llm_config.tool_call_limit,
-                                              llm._tool_calls)
+    llm._spend_tool_call = _tool_call_budget(llm_config.tool_call_limit,
+                                            llm._tool_calls)
     llm.agent = _FakeAgent(_FakeStreamResult(chunks, list(messages)))
     return llm
 
@@ -407,32 +407,40 @@ def test_our_own_tool_cap_counts_calls_the_librarys_does_not():
     so the library counter can stay frozen while the run loops. Our counter
     lives in the tool body, so it sees every call that actually runs.
     """
-    from voice_agent.llm import ToolCallLimitReached, _tool_call_counter
+    from voice_agent.llm import _tool_call_budget
     from voice_agent.config import llm_config
 
     counter = [0]
-    check = _tool_call_counter(llm_config.tool_call_limit, counter)
+    spend = _tool_call_budget(llm_config.tool_call_limit, counter)
 
     for _ in range(llm_config.tool_call_limit):
-        check()                       # must not raise within budget
-    with pytest.raises(ToolCallLimitReached):
-        check()
+        assert spend() is None, "must allow calls within budget"
+    refusal = spend()
+    assert refusal is not None and "budget" in refusal.lower()
     assert counter[0] == llm_config.tool_call_limit + 1
+
+
+def test_exhausted_tool_budget_never_raises():
+    """Raising inside a tool body feeds the model a retry - measured at 24 calls."""
+    from voice_agent.llm import _tool_call_budget
+
+    spend = _tool_call_budget(1, [0])
+    first, second = spend(), spend()
+    assert first is None
+    assert isinstance(second, str), "refusal must be a string the model reads"
 
 
 def test_our_tool_cap_is_per_turn_not_per_session():
     """A long conversation must not exhaust a budget that is meant to be per turn."""
-    from voice_agent.llm import ToolCallLimitReached, _tool_call_counter
+    from voice_agent.llm import _tool_call_budget
     from voice_agent.config import llm_config
 
     counter = [0]
-    check = _tool_call_counter(llm_config.tool_call_limit, counter)
-    for turn in range(5):
+    spend = _tool_call_budget(llm_config.tool_call_limit, counter)
+    for _ in range(5):
         counter[0] = 0               # what stream_into does per turn
         for _ in range(llm_config.tool_call_limit):
-            check()
-        with pytest.raises(ToolCallLimitReached):
-            check()
+            assert spend() is None
 
 
 def test_agent_tools_call_the_counter():
@@ -442,7 +450,7 @@ def test_agent_tools_call_the_counter():
     from voice_agent.llm import LLMAgent
 
     src = inspect.getsource(LLMAgent.register_tools)
-    assert src.count("self._check_tool_call()") == 3, (
+    assert src.count("self._spend_tool_call()") == 3, (
         "all three registered tools must be counted"
     )
 

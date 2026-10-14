@@ -69,14 +69,26 @@ class ToolCallLimitReached(RuntimeError):
     """
 
 
-def _tool_call_counter(limit: int, counter: list[int]):
-    """Return a callable that trips once a turn exceeds `limit` tool calls."""
-    def check() -> None:
+def _tool_call_budget(limit: int, counter: list[int]):
+    """Return a callable that reports when this turn's tool budget is spent.
+
+    Deliberately returns a refusal string rather than raising. An exception
+    from a tool body is handed back to the model as a retry, which invites
+    exactly the loop this exists to stop - measured at 24 calls against a limit
+    of 6 while raising, plus a rate-limit failure from the retries. Telling the
+    model the budget is spent gets the same result without feeding it a reason
+    to try again.
+    """
+    def spend() -> str | None:
         counter[0] += 1
         if counter[0] > limit:
-            raise ToolCallLimitReached(
-                f"{counter[0]} tool calls in one turn (limit {limit})")
-    return check
+            return (
+                f"Tool budget for this turn is spent ({limit} calls). Do not "
+                "call another tool. Answer now using what you already found, "
+                "or say that you could not find it."
+            )
+        return None
+    return spend
 
 
 def split_sentences(buf: str) -> tuple[list[str], str]:
@@ -126,26 +138,29 @@ class LLMAgent:
         # ToolCallPart away from its ToolReturnPart.
         self._turns = []
         self._tool_calls = [0]
-        self._check_tool_call = _tool_call_counter(
+        self._spend_tool_call = _tool_call_budget(
             llm_config.tool_call_limit, self._tool_calls)
 
     def register_tools(self):
         @self.agent.tool
         async def bash_tool(ctx: RunContext, command: str) -> str:
             """Run a read-only shell command (e.g. ls, cat, grep, git status) and return its output."""
-            self._check_tool_call()
+            if (refusal := self._spend_tool_call()) is not None:
+                return refusal
             return await BashTool.execute_command(command)
 
         @self.agent.tool
         async def readfile_tool(ctx: RunContext, path: str) -> str:
             """Read the contents of a text file at the given path."""
-            self._check_tool_call()
+            if (refusal := self._spend_tool_call()) is not None:
+                return refusal
             return await ReadFileTool.readfile(path)
 
         @self.agent.tool
         async def get_tree_tool(ctx: RunContext) -> str:
             """List the files in the current project directory."""
-            self._check_tool_call()
+            if (refusal := self._spend_tool_call()) is not None:
+                return refusal
             return await GetTreeTool.get_tree()
 
     @property

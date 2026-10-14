@@ -61,9 +61,13 @@ uv run python scripts/calibrate_vad.py path/to/speech.wav
 
 ## Verification status
 
-_As of 2026-10-14. A snapshot, and it goes stale — re-check every row when
-`asr.py`, `tts.py`, `aec.py`, `llm.py` or `config.py` changes, and treat an un-re-checked
-table as evidence of nothing._
+_As of 2026-10-14. A snapshot, and it goes stale — re-check every row when `asr.py`,
+`tts.py`, `aec.py`, `llm.py` or `config.py` changes, and treat an un-re-checked table as
+evidence of nothing._
+
+_Narrower still: every model-dependent row is valid only for the model as served on the
+date measured. None of these files fire when Groq changes how `gpt-oss-20b` behaves, and
+the narration and tool-call rows depend entirely on the model rather than on the code._
 
 What each load-bearing claim rests on, and what it does not. This section exists
 because four separate errors in this project were all "a number from a path the
@@ -80,8 +84,9 @@ this, and does the agent use it?"
 | ASR turn ~815 ms | Live, wall-clock-paced measurement against real AssemblyAI | Generalises beyond that clip and key |
 | Self-echo guard holds | Offline, up to ~30% transcription error | Echo degraded past recognition, where it cannot help at all |
 | Intent-narration filter | Offline classification tests over the observed shapes | **How often narration occurs.** Unmeasured. Across varied prompts the two samples disagree (1 of 6, then 1 of 2); on a single prompt the model is *uncertain* it narrated in 4 of 5 runs, so the rate is likely highest exactly where the agent has nothing to go on. A 95% interval on 1-in-6 spans 0.4–64%, which cannot separate "occasional" from "one in three" |
-| Narration rate — how to close it | One agent request is ~320 tokens of prefill, so the 8000 TPM cap fits ~25 requests/min | Not a higher-tier problem. Sleep 45 s between prompts and 26 prompts is a ~20-minute run, not a 2-minute one. That is the cheap path; it was not tried |
-| Tool loops are bounded | `request_limit` is checked before every request and is cumulative — read in pydantic-ai's source | **Not reproduced live.** Attempted: five runs of the prompt that once ran 76 s all finished in 0.2–1.2 s without looping, so the cap never fired. The runaway is stochastic and I failed to reproduce it, which leaves the brake as untested as it was before |
+| Narration is filtered | Offline classification tests over the observed shapes | **How often narration occurs — and "rate" is the wrong frame.** It is conditional on uncertainty, not random: on a prompt the model was unsure about it narrated 4 times in 5, while across varied prompts it was 1 in 6. Averaging a mix of easy and hard prompts measures the prompt selection, not the model, so the paced 26-prompt run would produce a number that looks meaningful and is not. The open question is what the agent should *do* when uncertain, which is a design decision, not a measurement |
+| Tool loops are bounded | **Behaviour, not source.** A forced loop (a function-backed model that only ever asks for another tool call) is aborted by `request_limit` within the configured number of model calls, and by `tool_calls_limit` for executions | Whether the *real* model loops on a real prompt. Five live runs of the 76 s prompt did not loop, so the live path is untested; only the brake is verified |
+| The agent does not invent repository state | Prompt rule: current-state questions must call a tool first. Enforced by the prompt, which is advice to the same model | **Nothing.** A hallucinated commit subject was observed and delivered confidently, and the narration filter cannot catch it — a false answer has no promise shape. This is the largest untested weakness in the stack |
 | Tool executions bounded at 6 | Our own counter inside the tool bodies | Does not shorten a turn — it only reduces subprocess work, shifting the run-length problem to `request_limit` |
 | Model choice is not the latency lever | Apples-to-apples through `LLMAgent`: 379 ms vs 318 ms, crossing maxes | n=4 per model; both are inside noise of each other |
 

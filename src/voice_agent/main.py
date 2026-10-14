@@ -5,11 +5,12 @@ import threading
 import numpy as np
 import pyaudio
 from pywebrtc_audio import VoiceDetector
+from pydantic_ai.exceptions import UsageLimitExceeded
 
 from voice_agent.aec import EchoCancellation
 from voice_agent.asr import StreamingASR
 from voice_agent.config import asr_config, llm_config, tts_config
-from voice_agent.llm import LLMAgent
+from voice_agent.llm import LLMAgent, is_intent_narration
 from voice_agent.tts import StreamingTTS
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -41,6 +42,7 @@ class VoiceAgent:
         self._barge_in = asyncio.Event()
         self._vad = VoiceDetector()
         self._voice_frames = 0
+        self._said_anything = False
 
     def _offer(self, data: bytes) -> None:
         try:
@@ -131,6 +133,12 @@ class VoiceAgent:
     async def _on_sentence(self, sentence: str) -> None:
         if self._barge_in.is_set():
             return
+        # Never say "let me check that" out loud: it is a promise the model may
+        # not keep, and dead air in front of a microphone reads as a hang.
+        if is_intent_narration(sentence):
+            logger.info("dropping intent narration: %s", sentence)
+            return
+        self._said_anything = True
         await self.tts.speak(sentence)
 
     async def _respond_loop(self) -> None:
@@ -144,17 +152,27 @@ class VoiceAgent:
                 continue
 
             self._barge_in.clear()
+            self._said_anything = False
             try:
                 await self.llm.stream_into(user_text, self._on_sentence)
             except asyncio.CancelledError:
                 break
+            except UsageLimitExceeded:
+                logger.warning("turn hit the %d tool-call cap",
+                               llm_config.tool_call_limit)
+                await self.tts.speak(
+                    "I went round in circles looking into that. "
+                    "Can you narrow the question down?")
             except Exception as e:
-                # A tool loop that trips the cap used to mean total silence for
-                # the length of it - up to nearly three minutes measured. Say
-                # something rather than leave the user talking to a wall.
-                logger.warning("reply failed after %d tool calls: %s",
-                               llm_config.tool_call_limit, e)
-                await self.tts.speak("That took too long. Try asking again.")
+                logger.warning("reply failed: %s", e)
+                await self.tts.speak("Something went wrong. Try asking again.")
+            else:
+                # Every sentence was narration, or the model produced nothing:
+                # either way the user is owed an answer, not a promise.
+                if not self._said_anything:
+                    logger.info("turn produced no answer: %s", user_text)
+                    await self.tts.speak(
+                        "I couldn't find that. Try asking differently.")
 
     async def run(self):
         self.is_running = True

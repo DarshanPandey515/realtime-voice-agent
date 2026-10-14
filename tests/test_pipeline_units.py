@@ -314,6 +314,86 @@ def test_generate_response_joins_sentences():
     assert out == "Hello there. Second part."
 
 
+# ------------------------------------------------------------------ intent narration
+
+@pytest.mark.parametrize("sentence", [
+    "Let me check the current git commit subject for you.",
+    "Let me look into that.",
+    "I'll run git log for you.",
+    "I would normally run a command like `git log -1`.",
+    "To find that, I'll search the repo.",
+    "I need to inspect the config first.",
+    "I'm going to take a look.",
+])
+def test_promises_of_action_are_not_spoken(sentence):
+    from voice_agent.llm import is_intent_narration
+
+    assert is_intent_narration(sentence) is True
+
+
+@pytest.mark.parametrize("sentence", [
+    "There are nine Python files in that folder.",
+    "The config sets the sample rate to 16000.",
+    "Your last commit was about naming AEC tests.",
+    "Let me think about that. The answer is four.",
+])
+def test_real_answers_are_still_spoken(sentence):
+    from voice_agent.llm import is_intent_narration
+
+    assert is_intent_narration(sentence) is False
+
+
+def test_a_turn_of_only_promises_gets_an_answer_instead():
+    """The measured failure: the turn ends on 'Let me check...' and stops."""
+    agent = _bare_agent()
+    agent._said_anything = False
+    agent.llm = type("L", (), {"stream_into": staticmethod(
+        lambda text, cb: cb("Let me check that for you."))})()
+
+    spoken = []
+
+    async def fake_speak(text):
+        spoken.append(text)
+
+    agent.tts.speak = fake_speak
+
+    async def run():
+        await agent._turns.put("what's the commit?")
+        task = asyncio.create_task(agent._respond_loop())
+        await asyncio.sleep(0.05)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(run())
+
+    assert spoken == ["I couldn't find that. Try asking differently."], spoken
+
+
+def test_a_real_answer_is_not_replaced():
+    agent = _bare_agent()
+    agent._said_anything = False
+    agent.llm = type("L", (), {"stream_into": staticmethod(
+        lambda text, cb: cb("There are nine Python files."))})()
+
+    spoken = []
+
+    async def fake_speak(text):
+        spoken.append(text)
+
+    agent.tts.speak = fake_speak
+
+    async def run():
+        await agent._turns.put("what files?")
+        task = asyncio.create_task(agent._respond_loop())
+        await asyncio.sleep(0.05)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(run())
+
+    assert spoken == ["There are nine Python files."], spoken
+
+
 def test_tool_loops_are_capped():
     """Measured 35 tool calls (107s) on gpt-oss and 21 (172s) on qwen3.8.
 

@@ -21,6 +21,40 @@ load_dotenv()
 MAX_TURNS = 6
 _SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+")
 
+# The model often narrates an action instead of taking it: "Let me check that
+# for you." followed by no tool call and no answer. Said out loud that is a
+# promise the agent does not keep, which is worse than silence - the user waits
+# for an answer that never comes. Measured on both models with the tool cap
+# engaged: turns ended on "Let me check..." or cut off mid-sentence.
+_ACTIONS = ("check", "look", "search", "run", "read", "find", "see", "open",
+            "inspect", "grab", "list", "grep")
+_SUBJECTS = ("let me", "i'll", "i will", "i'd", "i would", "i'm going to",
+             "i am going to", "i need to", "i should", "i can", "i could")
+# Matched on subject *plus* action verb, so "let me think about that" survives
+# - thinking aloud is not a promise to go read something.
+_INTENT_LEAD = tuple(f"{s} {a}" for s in _SUBJECTS for a in _ACTIONS) + (
+    "to check", "to find", "to look", "to search", "to read",
+)
+# Phrases that can sit mid-clause, so they cannot be startswith matches.
+_INTENT_IDIOM = ("take a look", "go take a look", "i would normally",
+                 "i would typically")
+
+
+def is_intent_narration(sentence: str) -> bool:
+    """True if the sentence promises an action rather than reporting a result.
+
+    ponytail: a leading-clause keyword match. It will occasionally drop a
+    legitimate sentence that opens "Let me think..." - acceptable, since such a
+    sentence is dead air in a voice agent anyway. A model-level fix would be to
+    stop prompting for narration, but the prompt is shared with the tool path.
+    """
+    head = sentence.strip().lower().lstrip('"\'“‘ ')
+    # Only the opening clause: the answer, if any, follows it.
+    head = re.split(r"[.,;:]", head)[0]
+    if any(head.startswith(marker) for marker in _INTENT_LEAD):
+        return True
+    return any(idiom in head for idiom in _INTENT_IDIOM)
+
 
 def split_sentences(buf: str) -> tuple[list[str], str]:
     """Pull complete sentences off the front of buf. Returns (sentences, tail)."""

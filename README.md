@@ -61,6 +61,10 @@ uv run python scripts/calibrate_vad.py path/to/speech.wav
 
 ## Verification status
 
+_As of 2026-10-14. A snapshot, and it goes stale — re-check every row when
+`asr.py`, `tts.py`, `aec.py`, `llm.py` or `config.py` changes, and treat an un-re-checked
+table as evidence of nothing._
+
 What each load-bearing claim rests on, and what it does not. This section exists
 because four separate errors in this project were all "a number from a path the
 agent does not use": the end-to-end figure that never opened a microphone, a
@@ -75,8 +79,9 @@ this, and does the agent use it?"
 | Echo cancellation is load-bearing | Offline test: raw synthetic echo drives the VAD gate on >50% of frames, AEC-cleaned on ~0% | Anything about a real room. Single delayed path, no reverb, no speaker |
 | ASR turn ~815 ms | Live, wall-clock-paced measurement against real AssemblyAI | Generalises beyond that clip and key |
 | Self-echo guard holds | Offline, up to ~30% transcription error | Echo degraded past recognition, where it cannot help at all |
-| Intent-narration filter | Offline classification tests over the observed shapes | **How often narration occurs.** Unmeasured. The two samples taken disagree (1 of 6, then 1 of 2), and a 95% interval on 1-in-6 spans 0.4–64%, which cannot separate "occasional" from "one in three". Bounded by the Groq key's 8000 TPM: one agent request is ~320 tokens of prefill, so ~25 requests/min fit, which is enough for the run on a higher tier but not alongside everything else this key is used for |
-| Tool loops are bounded | `request_limit` is checked before every request and is cumulative — read in pydantic-ai's source | **Not reproduced live.** The old cap was also source-verified and failed 9 and 15 calls against a limit of 6 |
+| Intent-narration filter | Offline classification tests over the observed shapes | **How often narration occurs.** Unmeasured. Across varied prompts the two samples disagree (1 of 6, then 1 of 2); on a single prompt the model is *uncertain* it narrated in 4 of 5 runs, so the rate is likely highest exactly where the agent has nothing to go on. A 95% interval on 1-in-6 spans 0.4–64%, which cannot separate "occasional" from "one in three" |
+| Narration rate — how to close it | One agent request is ~320 tokens of prefill, so the 8000 TPM cap fits ~25 requests/min | Not a higher-tier problem. Sleep 45 s between prompts and 26 prompts is a ~20-minute run, not a 2-minute one. That is the cheap path; it was not tried |
+| Tool loops are bounded | `request_limit` is checked before every request and is cumulative — read in pydantic-ai's source | **Not reproduced live.** Attempted: five runs of the prompt that once ran 76 s all finished in 0.2–1.2 s without looping, so the cap never fired. The runaway is stochastic and I failed to reproduce it, which leaves the brake as untested as it was before |
 | Tool executions bounded at 6 | Our own counter inside the tool bodies | Does not shorten a turn — it only reduces subprocess work, shifting the run-length problem to `request_limit` |
 | Model choice is not the latency lever | Apples-to-apples through `LLMAgent`: 379 ms vs 318 ms, crossing maxes | n=4 per model; both are inside noise of each other |
 
@@ -93,6 +98,11 @@ nothing.
 - AEC needs a converged far-end reference, so the first stretch of speech after playback
   starts is the leakiest. Turns arriving inside `aec_config.warmup_ms` are dropped rather
   than trusted, which means a genuine barge-in that early is missed.
+- **Testing the AEC needs loudspeakers, not headphones.** With headphones there is no echo
+  path, so the agent cannot hear itself and the run collapses to "the self-echo guard
+  works" — which is already covered offline. The question still open, whether AEC
+  suppresses real room echo, is only answerable on a speaker-and-mic rig, and that may not
+  be the machine you normally develop on.
 - The self-echo guard is a similarity threshold, not an acoustic test. Say something
   close to the agent's last sentence and your turn gets dropped; raise
   `aec_config.echo_match_ratio` to be stricter.

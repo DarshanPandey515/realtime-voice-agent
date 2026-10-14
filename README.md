@@ -44,18 +44,28 @@ flowchart TD
 uv run pytest tests/test_pipeline_units.py -v   # no API keys, no audio device
 ```
 
-Covers the bash allowlist, output capping, turn-based history, sentence splitting, and
-the barge-in path. The latency suite needs keys and, for a real ASR turn number, a
-16 kHz mono wav via `ASR_AUDIO_FILE`.
+Covers the bash allowlist, output capping, turn-based history, sentence splitting, echo
+cancellation, self-echo rejection, and both barge-in paths. The latency suite needs keys
+and, for a real ASR turn number, a 16 kHz mono wav via `ASR_AUDIO_FILE`.
+
+None of these tests can prove the echo cancellation works. They cover the plumbing
+around it; whether AEC actually cancels depends on the room, and that needs a human with
+a speaker.
 
 ## Known limits
 
 - Single turn queue and single response at a time — no overlap between turns.
-- Barge-in is turn-based, so the agent finishes your sentence before it can be cut off
-  mid-word. Echo cancellation stops it hearing itself, but it still cannot notice you
-  until your turn closes.
-- AEC convergence is fastest with a steady far-end reference, so the first moment after
-  the agent starts speaking is the leakiest.
+- Playback is interrupted by voice activity on the cleaned mic audio, so you can cut
+  the agent off mid-sentence. What it *cannot* do is cut you off mid-word — the reply to
+  your interruption still waits for ASR to close your turn.
+- AEC needs a converged far-end reference, so the first stretch of speech after playback
+  starts is the leakiest. Turns arriving inside `aec_config.warmup_ms` are dropped rather
+  than trusted, which means a genuine barge-in that early is missed.
+- The self-echo guard is a similarity threshold, not an acoustic test. Say something
+  close to the agent's last sentence and your turn gets dropped; raise
+  `aec_config.echo_match_ratio` to be stricter.
+- `asr_config.vad_threshold` and `aec_config.warmup_ms` are calibrated against one
+  microphone and one room. Both are the knobs to turn if it misbehaves for you.
 - `find`/`grep` can stall a turn silently for up to 15 s; nothing tells the user it is
   waiting.
 - Tool calls can push a turn to tens of seconds, far past anything the latency table
@@ -160,7 +170,9 @@ Two honest caveats about where the remaining time goes:
   system prompt asks for, the visible answer is ~8 tokens arriving right after the
   reasoning ends, so there is no interval left to chunk. Switching to a non-reasoning
   model would put text on the wire immediately and is the lever worth pulling if first
-  audio ever matters more than answer quality.
+  audio ever matters more than answer quality. Note that Groq model catalogs differ by
+  key tier — `llama-3.3-70b-versatile` 404s on the key this was developed against, so
+  check what your own key can actually reach before planning around a model swap.
 - **The concurrency fixes do not show up in these numbers at all**, because the harness
   sums stages instead of running them together. What they buy is barge-in: the agent can
   now be interrupted mid-sentence instead of finishing first.

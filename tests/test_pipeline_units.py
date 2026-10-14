@@ -314,6 +314,58 @@ def test_generate_response_joins_sentences():
     assert out == "Hello there. Second part."
 
 
+# ------------------------------------------------------------------ barge-in VAD
+
+class _FakeVAD:
+    def __init__(self, probs):
+        self._probs = list(probs)
+
+    def process(self, pcm):
+        return self._probs.pop(0) if self._probs else 0.0
+
+
+def test_sustained_speech_is_detected_without_a_transcript():
+    """The point of VAD gating: no transcript, no turn, still cuts off."""
+    agent = _bare_agent()
+    agent._vad = _FakeVAD([0.9, 0.9])
+    agent._voice_frames = 0
+
+    chunk = np.zeros(800, dtype=np.int16).tobytes()
+    fired = [agent._is_user_speech(chunk) for _ in range(2)]
+
+    # Onset gating: the first loud frame arms it, the second fires.
+    assert fired == [False, True]
+
+
+def test_single_frame_blip_does_not_interrupt():
+    """A click should not cut off the agent mid-sentence."""
+    agent = _bare_agent()
+    agent._vad = _FakeVAD([0.95, 0.1, 0.95])
+    agent._voice_frames = 0
+
+    chunk = np.zeros(800, dtype=np.int16).tobytes()
+    fired = [agent._is_user_speech(chunk) for _ in range(3)]
+
+    assert fired == [False, False, False]
+
+
+def test_silence_never_interrupts():
+    agent = _bare_agent()
+    agent._vad = _FakeVAD([0.0] * 5)
+    agent._voice_frames = 0
+
+    chunk = np.zeros(800, dtype=np.int16).tobytes()
+    assert not any(agent._is_user_speech(chunk) for _ in range(5))
+
+
+def test_vad_threshold_is_the_documented_calibration_point():
+    from voice_agent.config import asr_config
+
+    assert 0.35 < asr_config.vad_threshold < 0.78, (
+        "threshold sits between measured silence (~0.35) and speech (~0.78)"
+    )
+
+
 # ------------------------------------------------------------------ self-echo
 
 def test_warmup_window_is_treated_as_echo():
@@ -629,6 +681,8 @@ def _bare_agent():
     agent.is_running = True
     agent._turns = asyncio.Queue(maxsize=1)
     agent._barge_in = asyncio.Event()
+    agent._vad = _FakeVAD([])
+    agent._voice_frames = 0
     return agent
 
 

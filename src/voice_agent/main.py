@@ -2,7 +2,9 @@ import asyncio
 import logging
 import threading
 
+import numpy as np
 import pyaudio
+from pywebrtc_audio import VoiceDetector
 
 from voice_agent.aec import EchoCancellation
 from voice_agent.asr import StreamingASR
@@ -37,6 +39,8 @@ class VoiceAgent:
         self._frames = asyncio.Queue(maxsize=64)
         self._turns = asyncio.Queue(maxsize=1)
         self._barge_in = asyncio.Event()
+        self._vad = VoiceDetector()
+        self._voice_frames = 0
 
     def _offer(self, data: bytes) -> None:
         try:
@@ -75,7 +79,27 @@ class VoiceAgent:
             frame = await self._frames.get()
             # Strip the agent's own voice before ASR ever sees it, otherwise it
             # transcribes itself and interrupts itself.
-            await self.asr.stream_audio(self.echo.process(frame))
+            clean = self.echo.process(frame)
+            # VAD on the *cleaned* audio. On raw input the agent's own voice
+            # reads as the user talking and cuts itself off again.
+            if self._is_user_speech(clean):
+                self.tts.interrupt()
+                self._barge_in.set()
+            await self.asr.stream_audio(clean)
+
+    def _is_user_speech(self, pcm: bytes) -> bool:
+        """Sustained speech on the mic, independent of turn detection.
+
+        Waiting for ASR to close a turn means the agent finishes its sentence
+        before it can be cut off, which is not what interrupting someone feels
+        like. This is deliberately independent of the transcript.
+        """
+        probability = self._vad.process(np.frombuffer(pcm, dtype=np.int16))
+        if probability < asr_config.vad_threshold:
+            self._voice_frames = 0
+            return False
+        self._voice_frames += 1
+        return self._voice_frames >= asr_config.vad_onset_frames
 
     async def _turn_loop(self) -> None:
         """Take finished turns and hand them to the responder.

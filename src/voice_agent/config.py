@@ -11,6 +11,12 @@ class ASRConfig:
     frames_per_buffer: int = 800
     model: str = "universal-3-5-pro"
     api_key: str = os.getenv("ASSEMBLYAI_API_KEY")
+    # Barge-in gate. Speech probability above the threshold for this many
+    # consecutive frames stops playback, without waiting for ASR to close a
+    # turn. Calibrated against real speech: silence sits below 0.35, speech
+    # around 0.78.
+    vad_threshold: float = 0.6
+    vad_onset_frames: int = 2
     
     
 @dataclass

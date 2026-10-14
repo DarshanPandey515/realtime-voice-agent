@@ -1,4 +1,5 @@
 # llm_agent.py
+import os
 import re
 
 from pydantic_ai.agent import Agent
@@ -6,6 +7,13 @@ from pydantic_ai import RunContext
 from voice_agent.tools import BashTool, ReadFileTool, GetTreeTool
 from voice_agent.config import llm_config
 from dotenv import load_dotenv
+
+
+from pydantic_ai.models.groq import GroqModel
+from pydantic_ai.providers.groq import GroqProvider
+from pydantic_ai.models.groq import GroqModelSettings
+
+
 
 load_dotenv()
 
@@ -42,8 +50,16 @@ project tree.
 class LLMAgent:
 
     def __init__(self):
+
+        self.groq_agent = GroqModel(
+            "qwen/qwen3.8-27b",
+            provider=GroqProvider(api_key=os.environ["GROQ_API_KEY"])
+        )
+
+
         self.agent = Agent(
-            model=llm_config.model,
+            model=self.groq_agent,
+            model_settings=GroqModelSettings(groq_reasoning_effort="none"),
             system_prompt=SYSTEM_PROMPT,
         )
         self.register_tools()

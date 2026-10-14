@@ -79,8 +79,10 @@ uv run python scripts/calibrate_vad.py path/to/speech.wav
   catchable this way — that case depends entirely on AEC having removed it first.
 - `find`/`grep` can stall a turn silently for up to 15 s; nothing tells the user it is
   waiting.
-- Tool calls can push a turn to tens of seconds, far past anything the latency table
-  suggests.
+- Tool calls are capped at 6 per turn (`llm_config.tool_call_limit`), but a turn that
+  hits the cap is a turn that mostly failed. Both models will happily loop tools —
+  35 calls in 107 s was measured on `gpt-oss-20b` — so treat the cap as a floor on bad
+  behaviour, not a sign the agent is working.
 - Full user speech is written to logs at INFO.
 
 See `implementation.md` for the engineering review behind these choices.
@@ -179,11 +181,15 @@ Two honest caveats about where the remaining time goes:
   emits 40–90 reasoning tokens before any speakable text, and `stream_text` correctly
   withholds reasoning from the text stream. For the 1–3 sentence replies this agent's
   system prompt asks for, the visible answer is ~8 tokens arriving right after the
-  reasoning ends, so there is no interval left to chunk. Switching to a non-reasoning
-  model would put text on the wire immediately and is the lever worth pulling if first
-  audio ever matters more than answer quality. Note that Groq model catalogs differ by
-  key tier — `llama-3.3-70b-versatile` 404s on the key this was developed against, so
-  check what your own key can actually reach before planning around a model swap.
+  reasoning ends, so there is no interval left to chunk.
+
+  Swapping to a non-reasoning model was tried and reverted. A raw `stream=True` probe
+  promised a large win (587 ms → 207 ms to first text), but measured through
+  `LLMAgent` the same comparison is 379 ms → 318 ms with crossing maxes. The probe
+  omits the system prompt and the three tool schemas, and that prefill dominates.
+  Groq's model catalog also varies by key tier — `llama-3.3-70b-versatile` 404s on the
+  key this was developed against — so measure through the agent, not the raw endpoint,
+  before trusting any model-swap number.
 - **The concurrency fixes do not show up in these numbers at all**, because the harness
   sums stages instead of running them together. What they buy is barge-in: the agent can
   now be interrupted mid-sentence instead of finishing first.

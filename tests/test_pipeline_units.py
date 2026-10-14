@@ -403,6 +403,27 @@ def test_suggested_threshold_returns_none_when_the_clip_overlaps():
     assert suggest_threshold(np.array([0.1]), np.array([])) is None
 
 
+def test_calibrator_refuses_a_threshold_from_a_collapsed_span():
+    """A narrow gap means the recording dominated it, not that 0.51 is right.
+
+    Louder room tone or a worse mic pushes the silence ceiling up and squeezes
+    the span. Emitting a number from that is worse than emitting nothing.
+    """
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    from calibrate_vad import MIN_SEPARATION, suggest_threshold
+
+    tight_silence = np.concatenate([np.full(80, 0.30), [0.479]])
+    tight_speech = np.concatenate([np.full(60, 0.60), [0.499]])  # span 0.02
+    assert tight_speech.min() > tight_silence.max()
+    assert suggest_threshold(tight_silence, tight_speech) is None
+
+    wide_speech = np.concatenate([np.full(60, 0.60), [0.479 + MIN_SEPARATION]])
+    assert suggest_threshold(tight_silence, wide_speech) is not None
+
+
 # ------------------------------------------------------------------ self-echo loop
 
 AGENT_SPOKEN = [
@@ -439,22 +460,22 @@ def _vad_fires(chunks, threshold):
                if detector.process(np.frombuffer(c, dtype=np.int16)) >= threshold)
 
 
-def test_own_voice_trips_the_barge_in_gate_without_aec():
-    """Why this test exists: uncancelled self-echo cuts the agent off mid-word."""
+def test_own_voice_drives_the_barge_in_gate_on_synthetic_echo():
+    """Why the AEC test above exists: uncancelled self-echo self-interrupts."""
     from voice_agent.config import asr_config
 
     pairs = _echo_capture()
     assert _vad_fires([c for c, _ in pairs], asr_config.vad_threshold) > len(pairs) * 0.2
 
 
-def test_aec_is_what_stops_the_agent_interrupting_itself():
-    """This is the measurement that justifies keeping AEC.
+def test_aec_reduces_vad_firing_on_synthetic_echo():
+    """Named for what it checks, not for what it hopes to imply.
 
-    The difflib guard catches self-echo up to ~50% transcription error, so on
-    its own it looks sufficient and a clean test says AEC contributes nothing.
-    That conclusion is wrong: with uncancelled echo the *VAD barge-in gate*
-    fires on a large fraction of frames, so the agent cuts itself off on
-    essentially every reply. AEC is what takes that to zero.
+    Synthetic echo is a single delayed path with no reverb or speaker
+    distortion, so this does NOT establish that AEC works in a real room. It
+    establishes the mechanism: uncancelled self-echo drives the barge-in gate,
+    and removing it does not. Whether a real room behaves this way is what the
+    next live run has to show.
     """
     from voice_agent.config import asr_config
 

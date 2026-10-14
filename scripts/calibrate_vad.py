@@ -26,8 +26,12 @@ def probabilities(pcm: bytes) -> np.ndarray:
     return np.array(out)
 
 
+MIN_SEPARATION = 0.05
+
+
 def suggest_threshold(silence: np.ndarray, speech: np.ndarray,
-                     bias: float = 0.35) -> float | None:
+                     bias: float = 0.35,
+                     min_separation: float = MIN_SEPARATION) -> float | None:
     """Threshold = silence ceiling plus a share of the separation.
 
     Set against the silence *ceiling*, not a median, and biased toward recall:
@@ -35,14 +39,21 @@ def suggest_threshold(silence: np.ndarray, speech: np.ndarray,
     distribution and drops the quietest speech frames, which is backwards for
     a barge-in gate. Onset gating already absorbs one-off false positives, so
     the margin can be small.
+
+    Returns None when the two classes overlap, or when the gap is too narrow to
+    place a threshold in with any confidence. The input is only as stable as
+    the recording: a louder room tone or a worse mic pushes the silence ceiling
+    up and squeezes this span, so a narrow span is a reason to re-record
+    rather than a reason to emit a number.
     """
     if not len(silence) or not len(speech):
         return None
     ceiling = float(silence.max())
     floor = float(speech.min())
-    if floor <= ceiling:
-        return None          # overlapping: no threshold separates this clip
-    return round(ceiling + (floor - ceiling) * bias, 2)
+    span = floor - ceiling
+    if span < min_separation:
+        return None
+    return round(ceiling + span * bias, 2)
 
 
 def main() -> None:
@@ -86,13 +97,22 @@ def main() -> None:
         print(f"\nseparation: silence ceiling {ceiling:.3f} -> speech floor "
               f"{floor:.3f} (span {floor - ceiling:.3f})")
         suggested = suggest_threshold(silence, speech)
+        span = floor - ceiling
         if suggested is None:
-            print("OVERLAPPING: no threshold separates this clip cleanly. "
-                  "Move further from the mic, or add noise suppression.")
+            print(f"\nseparation: silence ceiling {ceiling:.3f} -> speech floor "
+                  f"{floor:.3f} (span {span:.3f})")
+            if span <= 0:
+                print("OVERLAPPING: no threshold separates this clip cleanly. "
+                      "Move further from the mic, or add noise suppression.")
+            else:
+                print(f"TOO NARROW: span {span:.3f} is under "
+                      f"{MIN_SEPARATION}. A threshold here would be dominated by "
+                      "recording conditions rather than by speech. Re-record "
+                      "somewhere quieter, or move further from the mic.")
         else:
-            print(f"suggested asr_config.vad_threshold: {suggested}")
-            print(f"  (silence ceiling {ceiling:.3f} + 35% of the "
-                  f"{floor - ceiling:.3f} separation, never below the ceiling)")
+            print(f"\nsuggested asr_config.vad_threshold: {suggested}")
+            print(f"  (silence ceiling {ceiling:.3f} + 35% of the {span:.3f} "
+                  f"separation, never below the ceiling)")
     else:
         print("\nNot enough of one class to suggest a threshold. Record a clip "
               "with both clear speech and clear room silence.")

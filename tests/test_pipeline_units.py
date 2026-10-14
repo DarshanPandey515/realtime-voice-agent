@@ -403,6 +403,113 @@ def test_suggested_threshold_returns_none_when_the_clip_overlaps():
     assert suggest_threshold(np.array([0.1]), np.array([])) is None
 
 
+# ------------------------------------------------------------------ self-echo loop
+
+AGENT_SPOKEN = [
+    "The project builds a real-time voice assistant.",
+    "It takes what you say, turns it into text, runs it through an AI model.",
+]
+
+
+def _echo_capture(gain=0.35, delay_ms=10, seed=0):
+    """(capture, far_end) chunks: the agent's own voice leaking into the mic."""
+    import wave
+
+    with wave.open("tests/sample.wav", "rb") as w:
+        speech = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16)
+    sig = np.tile(speech, 3)[:len(speech) // 800 * 800 * 3]
+
+    rng = np.random.default_rng(seed)
+    delay = int(delay_ms / 1000 * 16000)
+    pairs = []
+    for i in range(0, len(sig) - 800, 800):
+        far = sig[i:i + 800]
+        leaked = np.concatenate((np.zeros(delay, np.int16), far))[:800]
+        cap = leaked.astype(np.float64) * gain + rng.normal(0, 120, 800)
+        pairs.append((np.clip(cap, -32768, 32767).astype(np.int16).tobytes(),
+                      far.tobytes()))
+    return pairs
+
+
+def _vad_fires(chunks, threshold):
+    from pywebrtc_audio import VoiceDetector
+
+    detector = VoiceDetector()
+    return sum(1 for c in chunks
+               if detector.process(np.frombuffer(c, dtype=np.int16)) >= threshold)
+
+
+def test_own_voice_trips_the_barge_in_gate_without_aec():
+    """Why this test exists: uncancelled self-echo cuts the agent off mid-word."""
+    from voice_agent.config import asr_config
+
+    pairs = _echo_capture()
+    assert _vad_fires([c for c, _ in pairs], asr_config.vad_threshold) > len(pairs) * 0.2
+
+
+def test_aec_is_what_stops_the_agent_interrupting_itself():
+    """This is the measurement that justifies keeping AEC.
+
+    The difflib guard catches self-echo up to ~50% transcription error, so on
+    its own it looks sufficient and a clean test says AEC contributes nothing.
+    That conclusion is wrong: with uncancelled echo the *VAD barge-in gate*
+    fires on a large fraction of frames, so the agent cuts itself off on
+    essentially every reply. AEC is what takes that to zero.
+    """
+    from voice_agent.config import asr_config
+
+    pairs = _echo_capture()
+    aec = EchoCancellation(sample_rate=16000, stream_delay_ms=64)
+    cleaned = []
+    for capture, far in pairs:
+        aec.add_playback(far)
+        cleaned.append(aec.process(capture))
+
+    fired = _vad_fires(cleaned, asr_config.vad_threshold)
+    assert fired <= len(cleaned) * 0.02, (
+        f"AEC left {fired}/{len(cleaned)} frames loud enough to self-interrupt"
+    )
+
+
+def test_guard_catches_self_echo_despite_transcription_errors():
+    """Far-field echo reaches ASR degraded, not verbatim."""
+    import random
+
+    from voice_agent.tts import StreamingTTS
+
+    def degrade(sentence, wer, seed):
+        rng = random.Random(seed)
+        words = sentence.split()
+        keep = max(1, int(round(len(words) * (1 - wer))))
+        idx = sorted(rng.sample(range(len(words)), keep))
+        return " ".join(words[i] for i in idx)
+
+    t = _bare_tts()
+    for wer in (0.1, 0.2, 0.3):
+        for sentence in AGENT_SPOKEN:
+            t._spoken.clear()
+            t._spoken.append(sentence)
+            for seed in range(10):
+                assert t.is_self_echo(degrade(sentence, wer, seed)), (
+                    f"guard missed degraded self-echo at {int(wer * 100)}% WER: "
+                    f"{degrade(sentence, wer, seed)!r}"
+                )
+
+
+def test_guard_does_not_cover_unrecognisable_echo():
+    """The coverage boundary, stated as a test so it is not forgotten.
+
+    When echo arrives so degraded that ASR emits filler rather than the
+    agent's words, difflib sees no match and lets it through. Nothing
+    downstream can recover that - AEC has to have removed the echo first.
+    """
+    from voice_agent.tts import StreamingTTS
+
+    t = _bare_tts()
+    t._spoken.append(AGENT_SPOKEN[0])
+    assert t.is_self_echo("mhm uh you know so okay right hmm wow") is False
+
+
 # ------------------------------------------------------------------ self-echo
 
 def test_warmup_window_is_treated_as_echo():

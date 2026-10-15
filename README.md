@@ -2,6 +2,8 @@
 
 A real-time voice AI assistant pipeline: listen with a microphone, transcribe speech, run an LLM agent, and speak the reply aloud.
 
+<img width="1398" height="586" alt="updated_architecture" src="https://github.com/user-attachments/assets/58bb7381-17b7-4d7e-9d57-6338e05e3a97" />
+
 ## Pipeline
 
 ```mermaid

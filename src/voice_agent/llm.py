@@ -53,6 +53,14 @@ def is_intent_narration(sentence: str) -> bool:
     legitimate sentence that opens "Let me think..." - acceptable, since such a
     sentence is dead air in a voice agent anyway. A model-level fix would be to
     stop prompting for narration, but the prompt is shared with the tool path.
+
+    UNOBSERVED: narration emitted in the same response as a tool call. The filter
+    drops the preamble there too, which is probably right - it is dead air
+    before an action that then happens - but it has never been seen. If it ever
+    is, the cost is a user who hears nothing and then gets an answer that
+    assumed context they were not given, such as "I'll check the last three
+    commits and the current branch" followed by "the last commit was X". Rare
+    on the evidence, and unmeasured rather than known-good.
     """
     head = sentence.strip().lower().lstrip('"\'“‘ ')
     # Only the opening clause: the answer, if any, follows it.

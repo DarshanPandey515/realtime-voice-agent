@@ -18,6 +18,13 @@ import pytest
 #
 # The remedy is cheap: make the fixture prove it can produce the condition
 # the test is about, on the same fixture, in the same test.
+#
+# Related habit, learned the hard way: run the suite before committing, even
+# for a change that only touches tests. A commit with a failing test leaves a red
+# tree for anyone who checks out that point, which is a worse artifact than a
+# commit message that overstates what was verified - one misleads a reader, the
+# other breaks them. It happened once here and was caught immediately, which is
+# not the same as it not happening.
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 RESULTS_DIR = PROJECT_ROOT / "reports"
 RESULTS_FILE = RESULTS_DIR / "latency_results.json"

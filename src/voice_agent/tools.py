@@ -21,9 +21,19 @@ READONLY_GIT_SUBCOMMANDS = {
 }
 
 # Naming the flags we allow beats naming the ones we block: a denylist has to
-# anticipate every write/exec vector and misses the next one. `--exec-path`
-# repoints where git looks for its own helper programs and `--ext-diff` runs an
-# external diff driver, so both bite even after a valid read-only subcommand.
+# anticipate every write/exec vector and misses the next one.
+#
+# The line is not "safe flags" in the abstract, it is two questions:
+#   - does the flag change what git RUNS?      -> refuse (--exec-path, --ext-diff)
+#   - does the flag change what git PRINTS?    -> allow  (--pretty, --format)
+# Anything that decides which program git runs, or runs at all, is out. Output
+# formatting and pager control are not. Keeping the reason here means the next
+# flag is a decision against this rule rather than a fresh judgement call - the
+# first allowlist refused --pretty and the model reported its shell access was
+# restricted, on a command that writes nothing.
+#
+# Also: `--output` writes a file, so it is a run-shaped flag, not a print-shaped
+# one, and falls out of the same rule rather than being special-cased.
 READONLY_GIT_FLAGS = {
     "--oneline", "--stat", "--shortstat", "--numstat", "--graph", "--decorate",
     "-p", "--patch", "--name-only", "--name-status", "--no-patch",
@@ -31,9 +41,7 @@ READONLY_GIT_FLAGS = {
     "--max-count", "--author", "--committer", "--since", "--after",
     "--until", "--before", "--grep", "-i", "--ignore-case", "-S",
     "--date", "--abbrev-commit", "--no-abbrev-commit", "--short",
-    # Output formatting and pager control. These only change what git prints,
-    # and refusing them pushed the model into "my shell access is
-    # restricted" on a harmless `git log -1 --pretty=%s`.
+    # Print-shaped.
     "--pretty", "--format", "--no-pager", "--topo-order", "--first-parent",
 }
 

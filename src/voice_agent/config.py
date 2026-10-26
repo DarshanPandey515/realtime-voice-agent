@@ -9,13 +9,12 @@ load_dotenv()
 class ASRConfig:
     sample_rate: int = 16000
     frames_per_buffer: int = 800
-    model: str = "universal-3-5-pro"
-    api_key: str = os.getenv("ASSEMBLYAI_API_KEY")
+    model: str = "nova-2"
+    api_key: str = os.getenv("DEEPGRAM_API_KEY")
     # PyAudio device index for microphone. Use -1 for default, or specify
     # a device index from `python -c "import pyaudio; p=pyaudio.PyAudio(); [print(f'{i}: {p.get_device_info_by_index(i)[\"name\"]}') for i in range(p.get_device_count())]"`
     input_device_index: int = int(os.getenv("INPUT_DEVICE_INDEX", "-1"))
     # Language code for transcription (e.g., "en" for English, "es" for Spanish)
-    # AssemblyAI auto-detects by default, but explicit setting prevents misdetection
     language_code: str = os.getenv("ASR_LANGUAGE_CODE", "en")
     # Barge-in gate. Speech probability above the threshold for this many
     # consecutive frames stops playback, without waiting for ASR to close a

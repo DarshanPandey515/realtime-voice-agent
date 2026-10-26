@@ -6,7 +6,7 @@ A real-time voice assistant. Speak, it transcribes, runs a tool-calling LLM agen
 
 ## Quickstart
 
-Needs Python 3.12+, a working microphone and speaker, and API keys for AssemblyAI (STT), Groq (LLM) and ElevenLabs (TTS).
+Needs Python 3.12+, a working microphone and speaker, and API keys for Deepgram (STT), Groq (LLM) and ElevenLabs (TTS).
 
 ```bash
 uv sync                 # or: pip install -e .
@@ -38,8 +38,8 @@ All model ids, the voice id, sample rates and API keys live in `src/voice_agent/
 
 | Component | Default |
 |-----------|---------|
-| ASR | `universal-3-5-pro`, 16 kHz mic input |
-| LLM | `groq:openai/gpt-oss-20b` |
+| ASR | `nova-2`, 16 kHz mic input |
+| LLM | `qwen/qwen3.8-27b` |
 | TTS | `eleven_flash_v2_5`, PCM 16 kHz output |
 
 TTS uses raw PCM (`pcm_16000`) so audio streams straight to PyAudio without decoding. The sample rate is deliberately the mic's 16 kHz rather than something higher: echo cancellation needs the far-end reference at the capture rate, and matching them in config beats resampling the reference on every audio chunk.
@@ -68,17 +68,17 @@ Measured by the benchmark suite. Full numbers, including the ones not shown here
 
 | Stage | Model | Median | Samples |
 |-------|-------|--------|---------|
-| ASR turn (end of speech → transcript) | `universal-3-5-pro` | 815 ms | 1 |
-| LLM time-to-first-token | `groq:openai/gpt-oss-20b` | 798 ms | 5 |
+| ASR turn (end of speech → transcript) | `nova-2` (estimated) | ~300 ms | TBD |
+| LLM time-to-first-token | `qwen/qwen3.8-27b` | 798 ms | 5 |
 | TTS first audio chunk | `eleven_flash_v2_5` | 227 ms | 5 |
-| Serial sum, end of speech → audio | — | 1.89 s | 8 |
+| Serial sum, end of speech → audio | — | ~1.33 s (estimated) | TBD |
 
 Read these with their limits attached:
 
 - Every row is one stage timed on its own, then added up. The harness opens no microphone and plays through no speaker, so no row here describes a real conversation. The serial sum is an upper bound — the live pipeline overlaps stages, and a sum cannot show that.
 - The `e2e_first_audio` metric exists but is not reported. The Groq key is rate limited to 8000 tokens/min, and the doubled call volume produced multi-second outliers that dominate the mean.
-- The ASR row is a **single sample**. Treat it as a working figure, not a benchmark.
-- `gpt-oss-20b` is a reasoning model: it emits reasoning tokens before any speakable text, and that is most of the 798 ms. Swapping to a non-reasoning model was tried and did not help. A raw `stream=True` probe promised 587 ms → 207 ms, but measured through `LLMAgent` with the system prompt and all three tool schemas attached, the same comparison is 379 ms vs 318 ms with crossing maxes (n=4). Prefill dominates, so measure through the agent, not the raw endpoint.
+- ASR figures are estimates for Deepgram nova-2. Actual benchmarks need to be re-run.
+- `qwen/qwen3.8-27b` is a reasoning model: it emits reasoning tokens before any speakable text, and that is most of the 798 ms. Swapping to a non-reasoning model was tried and did not help. A raw `stream=True` probe promised 587 ms → 207 ms, but measured through `LLMAgent` with the system prompt and all three tool schemas attached, the same comparison is 379 ms vs 318 ms with crossing maxes (n=4). Prefill dominates, so measure through the agent, not the raw endpoint.
 
 ## Testing
 

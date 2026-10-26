@@ -106,5 +106,5 @@ class StreamingTTS:
 
 
     def interrupt(self) -> None:
-        logger.info("TTS: Interrupting playback")
+        logger.debug("TTS: Interrupting playback")
         self._cancel.set()

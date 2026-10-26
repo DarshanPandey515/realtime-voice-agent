@@ -32,8 +32,8 @@ class ASRConfig:
     #
     # Re-measure per device with scripts/calibrate_vad.py; the distribution
     # shifts with mic, gain and room before anything else changes.
-    vad_threshold: float = 0.5
-    vad_onset_frames: int = 2
+    vad_threshold: float = float(os.getenv("VAD_THRESHOLD", "0.7"))
+    vad_onset_frames: int = int(os.getenv("VAD_ONSET_FRAMES", "3"))
     
     
 @dataclass

@@ -11,6 +11,9 @@ class ASRConfig:
     frames_per_buffer: int = 800
     model: str = "universal-3-5-pro"
     api_key: str = os.getenv("ASSEMBLYAI_API_KEY")
+    # PyAudio device index for microphone. Use -1 for default, or specify
+    # a device index from `python -c "import pyaudio; p=pyaudio.PyAudio(); [print(f'{i}: {p.get_device_info_by_index(i)[\"name\"]}') for i in range(p.get_device_count())]"`
+    input_device_index: int = int(os.getenv("INPUT_DEVICE_INDEX", "-1"))
     # Barge-in gate. Speech probability above the threshold for this many
     # consecutive frames stops playback, without waiting for ASR to close a
     # turn.
@@ -107,6 +110,9 @@ class TTSConfig:
     # delay as a hint, so this is derived rather than duplicated.
     output_frames_per_buffer: int = 1024
     api_key: str = os.getenv("ELEVENLABS_API_KEY")
+    # PyAudio device index for speaker. Use -1 for default, or specify
+    # a device index from `python -c "import pyaudio; p=pyaudio.PyAudio(); [print(f'{i}: {p.get_device_info_by_index(i)[\"name\"]}') for i in range(p.get_device_count())]"`
+    output_device_index: int = int(os.getenv("OUTPUT_DEVICE_INDEX", "-1"))
 
 
 

@@ -61,6 +61,7 @@ class VoiceAgent:
                 rate=asr_config.sample_rate,
                 input=True,
                 frames_per_buffer=asr_config.frames_per_buffer,
+                input_device_index=asr_config.input_device_index if asr_config.input_device_index >= 0 else None,
             )
             while self.is_running:
                 data = stream.read(

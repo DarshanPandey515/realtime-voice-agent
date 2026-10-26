@@ -76,6 +76,7 @@ class StreamingTTS:
                     rate=tts_config.sample_rate,
                     output=True,
                     frames_per_buffer=tts_config.output_frames_per_buffer,
+                    output_device_index=tts_config.output_device_index if tts_config.output_device_index >= 0 else None,
                 )
                 for chunk in self.client.text_to_speech.stream(
                     text=text,

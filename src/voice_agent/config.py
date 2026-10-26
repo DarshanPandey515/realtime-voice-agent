@@ -14,6 +14,9 @@ class ASRConfig:
     # PyAudio device index for microphone. Use -1 for default, or specify
     # a device index from `python -c "import pyaudio; p=pyaudio.PyAudio(); [print(f'{i}: {p.get_device_info_by_index(i)[\"name\"]}') for i in range(p.get_device_count())]"`
     input_device_index: int = int(os.getenv("INPUT_DEVICE_INDEX", "-1"))
+    # Language code for transcription (e.g., "en" for English, "es" for Spanish)
+    # AssemblyAI auto-detects by default, but explicit setting prevents misdetection
+    language_code: str = os.getenv("ASR_LANGUAGE_CODE", "en")
     # Barge-in gate. Speech probability above the threshold for this many
     # consecutive frames stops playback, without waiting for ASR to close a
     # turn.

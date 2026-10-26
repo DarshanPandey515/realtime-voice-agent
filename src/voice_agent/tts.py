@@ -1,5 +1,6 @@
 import asyncio
 import difflib
+import logging
 import threading
 import time
 from collections import deque
@@ -10,6 +11,8 @@ from voice_agent.config import aec_config, tts_config
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 
 class StreamingTTS:
@@ -55,6 +58,7 @@ class StreamingTTS:
     async def speak(self, text: str) -> None:
         # Synthesis reads a blocking HTTP stream and playback blocks the
         # speaker, so neither belongs on the event loop.
+        logger.info("TTS: Speaking: %s", text[:100] + "..." if len(text) > 100 else text)
         await asyncio.to_thread(self._play_blocking, text)
 
 
@@ -102,4 +106,5 @@ class StreamingTTS:
 
 
     def interrupt(self) -> None:
+        logger.info("TTS: Interrupting playback")
         self._cancel.set()

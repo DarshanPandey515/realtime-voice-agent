@@ -58,7 +58,8 @@ class StreamingASR:
     async def connect(self, timeout: float = 30.0):
         params = RealTimeParameters(
             sample_rate=asr_config.sample_rate,
-            speech_model=asr_config.model
+            speech_model=asr_config.model,
+            language_code=asr_config.language_code
         )
         self._connected.clear()
         await self.transcriber.connect(params)

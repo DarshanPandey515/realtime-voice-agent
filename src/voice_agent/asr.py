@@ -109,10 +109,7 @@ class StreamingASR:
 
     async def stream_audio(self, data):
         if self.is_running and self.connection:
-            logger.debug("Sending audio chunk: %d bytes", len(data))
             await self.connection.send_media(data)
-        else:
-            logger.debug("Skipping audio: is_running=%s, connection=%s", self.is_running, self.connection is not None)
 
     async def disconnect(self):
         self.is_running = False

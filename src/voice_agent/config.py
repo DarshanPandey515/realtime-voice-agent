@@ -9,7 +9,7 @@ load_dotenv()
 class ASRConfig:
     sample_rate: int = 16000
     frames_per_buffer: int = 800
-    model: str = "nova-2"
+    model: str = "nova-3"
     api_key: str = os.getenv("DEEPGRAM_API_KEY")
     # PyAudio device index for microphone. Use -1 for default, or specify
     # a device index from `python -c "import pyaudio; p=pyaudio.PyAudio(); [print(f'{i}: {p.get_device_info_by_index(i)[\"name\"]}') for i in range(p.get_device_count())]"`

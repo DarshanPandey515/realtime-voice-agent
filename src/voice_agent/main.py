@@ -54,6 +54,7 @@ class VoiceAgent:
     def _mic_thread(self, loop) -> None:
         p = pyaudio.PyAudio()
         stream = None
+        frame_count = 0
         try:
             stream = p.open(
                 format=pyaudio.paInt16,
@@ -63,23 +64,33 @@ class VoiceAgent:
                 frames_per_buffer=asr_config.frames_per_buffer,
                 input_device_index=asr_config.input_device_index if asr_config.input_device_index >= 0 else None,
             )
+            logger.info("Mic thread started, reading from device")
             while self.is_running:
                 data = stream.read(
                     asr_config.frames_per_buffer,
                     exception_on_overflow=False,
                 )
+                frame_count += 1
+                if frame_count % 100 == 0:
+                    logger.info("Mic read %d frames", frame_count)
                 loop.call_soon_threadsafe(self._offer, data)
         except Exception as e:
+            logger.error("Mic thread error: %s", e)
             self._mic_error = e
         finally:
             if stream is not None:
                 stream.stop_stream()
                 stream.close()
             p.terminate()
+            logger.info("Mic thread terminated")
 
     async def _pump_audio(self) -> None:
+        frame_count = 0
         while self.is_running:
             frame = await self._frames.get()
+            frame_count += 1
+            if frame_count % 100 == 0:
+                logger.debug("Pumped %d audio frames", frame_count)
             # Strip the agent's own voice before ASR ever sees it, otherwise it
             # transcribes itself and interrupts itself.
             clean = self.echo.process(frame)

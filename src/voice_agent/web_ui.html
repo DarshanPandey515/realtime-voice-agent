@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Agent - Browser Test Client</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            margin-top: 0;
+            color: #333;
+        }
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin: 20px 0;
+        }
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        #start-btn { background: #4CAF50; color: white; }
+        #stop-btn { background: #f44336; color: white; }
+        #interrupt-btn { background: #ff9800; color: white; }
+        #clear-btn { background: #2196F3; color: white; }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            background: #e3f2fd;
+        }
+        .status.connected { background: #d4edda; }
+        .status.disconnected { background: #f8d7da; }
+        .status.listening { background: #fff3cd; }
+        .status.speaking { background: #e1bee7; }
+        .transcript {
+            margin: 20px 0;
+            padding: 15px;
+            background: #fafafa;
+            border-radius: 4px;
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+        }
+        .message {
+            margin: 10px 0;
+            padding: 8px 12px;
+            border-radius: 4px;
+        }
+        .message.user {
+            background: #e3f2fd;
+            margin-left: 20px;
+        }
+        .message.agent {
+            background: #f3e5f5;
+            margin-right: 20px;
+        }
+        .message .sender {
+            font-weight: bold;
+            font-size: 12px;
+            color: #666;
+        }
+        .message .text {
+            margin-top: 4px;
+        }
+        .info {
+            margin: 10px 0;
+            padding: 10px;
+            background: #fff3cd;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Voice Agent - Browser Test Client</h1>
+        
+        <div class="controls">
+            <button id="start-btn">Start Session</button>
+            <button id="stop-btn" disabled>Stop Session</button>
+            <button id="interrupt-btn" disabled>Interrupt Playback</button>
+            <button id="clear-btn">Clear Transcript</button>
+        </div>
+
+        <div id="status" class="status disconnected">Status: Disconnected</div>
+
+        <div class="info">
+            <strong>Instructions:</strong> Click "Start Session" and allow microphone access.
+            Speak into your microphone to interact with the agent.
+        </div>
+
+        <div class="transcript" id="transcript">
+            <div class="message agent">
+                <div class="sender">Agent</div>
+                <div class="text">Waiting for session...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let audioContext = null;
+        let mediaStream = null;
+        let scriptProcessor = null;
+        let isPlaying = false;
+
+        const startBtn = document.getElementById('start-btn');
+        const stopBtn = document.getElementById('stop-btn');
+        const interruptBtn = document.getElementById('interrupt-btn');
+        const clearBtn = document.getElementById('clear-btn');
+        const statusDiv = document.getElementById('status');
+        const transcriptDiv = document.getElementById('transcript');
+
+        function updateStatus(status, message) {
+            statusDiv.className = `status ${status}`;
+            statusDiv.textContent = `Status: ${message}`;
+        }
+
+        function addMessage(sender, text) {
+            const msgDiv = document.createElement('div');
+            msgDiv.className = `message ${sender.toLowerCase()}`;
+            msgDiv.innerHTML = `<div class="sender">${sender}</div><div class="text">${text}</div>`;
+            transcriptDiv.appendChild(msgDiv);
+            transcriptDiv.scrollTop = transcriptDiv.scrollHeight;
+        }
+
+        async function startSession() {
+            try {
+                // Request microphone access
+                mediaStream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        channelCount: 1,
+                        sampleRate: 16000,
+                        echoCancellation: false,
+                        noiseSuppression: false
+                    }
+                });
+
+                // Create audio context
+                audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                    sampleRate: 16000
+                });
+
+                // Create script processor for audio processing
+                const source = audioContext.createMediaStreamSource(mediaStream);
+                const processor = audioContext.createScriptProcessor(4096, 1, 1);
+
+                processor.onaudioprocess = async (event) => {
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        const inputData = event.inputBuffer.getChannelData(0);
+                        const pcmData = new Int16Array(inputData.length);
+                        
+                        // Convert float32 to int16
+                        for (let i = 0; i < inputData.length; i++) {
+                            let s = Math.max(-1, Math.min(1, inputData[i]));
+                            pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                        }
+
+                        // Send PCM data as bytes
+                        await ws.send(pcmData.buffer);
+                    }
+                };
+
+                source.connect(processor);
+                processor.connect(audioContext.destination);
+                scriptProcessor = processor;
+
+                // Connect WebSocket
+                const wsUrl = `ws://${window.location.host}/ws/audio`;
+                ws = new WebSocket(wsUrl);
+
+                ws.onopen = () => {
+                    updateStatus('connected', 'Connected');
+                    startBtn.disabled = true;
+                    stopBtn.disabled = false;
+                    interruptBtn.disabled = false;
+                    addMessage('System', 'Session started. Speak to interact.');
+                };
+
+                ws.onmessage = async (event) => {
+                    if (event.data instanceof Blob) {
+                        // Audio data from TTS
+                        const arrayBuffer = await event.data.arrayBuffer();
+                        if (audioContext.state === 'suspended') {
+                            await audioContext.resume();
+                        }
+                        
+                        const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+                        const source = audioContext.createBufferSource();
+                        source.buffer = audioBuffer;
+                        source.connect(audioContext.destination);
+                        source.start();
+                        
+                        if (!isPlaying) {
+                            isPlaying = true;
+                            updateStatus('speaking', 'Speaking...');
+                        }
+                        
+                        source.onended = () => {
+                            isPlaying = false;
+                            updateStatus('listening', 'Listening...');
+                        };
+                    } else {
+                        // JSON message
+                        const data = JSON.parse(event.data);
+                        if (data.type === 'session_started') {
+                            updateStatus('listening', 'Listening...');
+                        } else if (data.type === 'playback_interrupted') {
+                            updateStatus('listening', 'Playback interrupted');
+                        } else if (data.type === 'error') {
+                            addMessage('Error', data.message);
+                            updateStatus('disconnected', 'Error: ' + data.message);
+                        }
+                    }
+                };
+
+                ws.onclose = () => {
+                    updateStatus('disconnected', 'Disconnected');
+                    startBtn.disabled = false;
+                    stopBtn.disabled = true;
+                    interruptBtn.disabled = true;
+                    stopAudio();
+                };
+
+                ws.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                    addMessage('Error', 'Connection error');
+                };
+
+            } catch (error) {
+                console.error('Error starting session:', error);
+                addMessage('Error', 'Failed to start: ' + error.message);
+            }
+        }
+
+        function stopSession() {
+            if (ws) {
+                ws.close();
+            }
+            stopAudio();
+            updateStatus('disconnected', 'Disconnected');
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            interruptBtn.disabled = true;
+        }
+
+        function stopAudio() {
+            if (scriptProcessor) {
+                scriptProcessor.disconnect();
+                scriptProcessor = null;
+            }
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+                mediaStream = null;
+            }
+            if (audioContext) {
+                audioContext.close();
+                audioContext = null;
+            }
+        }
+
+        function interruptPlayback() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'interrupt' }));
+            }
+        }
+
+        function clearTranscript() {
+            transcriptDiv.innerHTML = '';
+            addMessage('System', 'Transcript cleared.');
+        }
+
+        startBtn.addEventListener('click', startSession);
+        stopBtn.addEventListener('click', stopSession);
+        interruptBtn.addEventListener('click', interruptPlayback);
+        clearBtn.addEventListener('click', clearTranscript);
+    </script>
+</body>
+</html>

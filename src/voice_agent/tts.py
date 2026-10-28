@@ -4,6 +4,7 @@ import logging
 import threading
 import time
 from collections import deque
+from typing import Callable, Optional
 
 import pyaudio
 from elevenlabs.client import ElevenLabs
@@ -17,13 +18,15 @@ logger = logging.getLogger(__name__)
 
 class StreamingTTS:
 
-    def __init__(self, echo=None):
+    def __init__(self, echo=None, audio_callback: Optional[Callable[[bytes], None]] = None):
         self.client = ElevenLabs(
             api_key=tts_config.api_key
         )
         # Set from any thread (including a turn callback) to cut playback short.
         self._cancel = threading.Event()
         self._echo = echo
+        # Optional callback for external audio routing (e.g., browser WebSocket)
+        self._audio_callback = audio_callback
         # Two output streams on one device interleave at the speaker, and they
         # also scramble the far-end reference the echo canceller depends on.
         self._play_lock = threading.Lock()
@@ -71,17 +74,26 @@ class StreamingTTS:
             self._cancel.clear()
             self._playback_started_at = time.monotonic()
             self._spoken.append(text)
-            p = pyaudio.PyAudio()
+
+            # Only open PyAudio if no audio callback is provided (terminal mode)
+            p = None
             stream = None
+            if self._audio_callback is None:
+                p = pyaudio.PyAudio()
+                try:
+                    stream = p.open(
+                        format=pyaudio.paInt16,
+                        channels=1,
+                        rate=tts_config.sample_rate,
+                        output=True,
+                        frames_per_buffer=tts_config.output_frames_per_buffer,
+                        output_device_index=tts_config.output_device_index if tts_config.output_device_index >= 0 else None,
+                    )
+                except Exception as e:
+                    logger.error("Failed to open speaker: %s", e)
+                    p = None
+
             try:
-                stream = p.open(
-                    format=pyaudio.paInt16,
-                    channels=1,
-                    rate=tts_config.sample_rate,
-                    output=True,
-                    frames_per_buffer=tts_config.output_frames_per_buffer,
-                    output_device_index=tts_config.output_device_index if tts_config.output_device_index >= 0 else None,
-                )
                 for chunk in self.client.text_to_speech.stream(
                     text=text,
                     voice_id=tts_config.voice_id,
@@ -97,12 +109,20 @@ class StreamingTTS:
                     # delay search and it stops subtracting anything.
                     if self._echo is not None:
                         self._echo.add_playback(chunk)
-                    stream.write(chunk)
+
+                    # Send chunk to external callback if provided (browser mode)
+                    if self._audio_callback is not None:
+                        self._audio_callback(chunk)
+
+                    # Play through speaker if no callback (terminal mode)
+                    if stream is not None:
+                        stream.write(chunk)
             finally:
                 if stream is not None:
                     stream.stop_stream()
                     stream.close()
-                p.terminate()
+                if p is not None:
+                    p.terminate()
 
 
     def interrupt(self) -> None:

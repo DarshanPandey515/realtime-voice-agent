@@ -16,6 +16,16 @@ uv run voice-agent      # or: .venv/bin/voice-agent
 
 The agent speaks a greeting, opens the mic and starts listening. Each turn is logged to the console as `user: ...` / `Assistant: ...`. `Ctrl+C` to stop.
 
+The optional browser testing interface uses the same ASR, LLM, turn handling and TTS components, with microphone audio sent over a WebSocket and generated audio routed back to the browser. Install and start it with:
+
+```bash
+uv sync --extra web                         # or: pip install -e '.[web]'
+cp .env.example .env                        # if not already configured
+uv run voice-agent-web                      # or: .venv/bin/voice-agent-web
+```
+
+Open `http://localhost:8000` and allow microphone access. The browser adapter bypasses AEC: there is no local playback reference available to the server, so incoming microphone audio is passed through unchanged. Browser mode therefore does not have the terminal pipeline's echo suppression. The interface is experimental; its interrupt button and transcript display are not connected to the live session logic.
+
 ## How it works
 
 `main.py` owns the orchestration: it connects the transcriber, opens the mic stream, and runs an async loop that waits for each finished turn, interrupts any speech in progress, generates the reply and plays it.
@@ -23,12 +33,18 @@ The agent speaks a greeting, opens the mic and starts listening. Each turn is lo
 | File | Role |
 |------|------|
 | `main.py` | Orchestrator — mic thread, turn loop, responder loop, wiring |
-| `asr.py` | Async streaming ASR over WebSocket, bounded turn queue, connect timeout |
-| `llm.py` | Agent with system prompt, tools, turn-based history, sentence streaming |
-| `tts.py` | Streaming TTS played off the event loop, interrupt (barge-in) support, tee to AEC |
+| `asr.py` | Deepgram async streaming ASR over WebSocket, bounded turn queue |
+| `llm.py` | Groq-hosted LLM agent with system prompt, tools, turn-based history, sentence streaming |
+| `tts.py` | ElevenLabs streaming TTS played off the event loop, interrupt (barge-in) support, tee to AEC |
 | `aec.py` | Echo cancellation — subtracts the agent's own voice from the mic |
 | `tools.py` | Tool implementations: bash allowlist, read file, project tree |
 | `config.py` | Model ids, voice id, sample rates, API keys |
+| `web_entry.py`, `web_server.py`, `browser_agent.py` | Optional FastAPI/WebSocket browser test interface and adapter around `VoiceAgent` |
+| `browser_aec.py`, `web_ui.html` | Browser audio pass-through (AEC disabled) and the served test page |
+
+**Terminal audio flow:** Microphone → PyAudio (16 kHz, linear16 PCM) → echo cancellation → WebRTC VAD → Deepgram streaming ASR → bounded turn queue → Groq-hosted LLM (sentence streaming, with tools) → ElevenLabs TTS → speaker. TTS audio is also supplied as the echo canceller's far-end reference. The VAD gate allows interruption during playback by detecting sustained speech on cleaned microphone audio.
+
+**Browser audio flow:** Browser microphone → Web Audio PCM conversion → WebSocket → shared `VoiceAgent` turn processing and Deepgram ASR → LLM → ElevenLabs TTS → WebSocket → browser. Browser mode reuses the turn processing and VAD, but bypasses AEC as described above. It does not use the terminal PyAudio microphone or speaker streams.
 
 A turn runs end of speech → transcription → the LLM streams sentence by sentence → each sentence plays as it lands. Voice activity during playback cuts the audio off instead of waiting for the sentence to finish; the reply to that interruption still waits for ASR to close your turn, so it can cut the agent off mid-sentence but not you mid-word.
 
@@ -38,9 +54,9 @@ All model ids, the voice id, sample rates and API keys live in `src/voice_agent/
 
 | Component | Default |
 |-----------|---------|
-| ASR | `nova-3`, 16 kHz mic input |
-| LLM | `qwen/qwen3.8-27b` |
-| TTS | `eleven_flash_v2_5`, PCM 16 kHz output |
+| ASR | Deepgram `nova-3`, 16 kHz mic input, language code `en` |
+| LLM | Groq `openai/gpt-oss-20b` (reasoning effort `none`) |
+| TTS | ElevenLabs `eleven_flash_v2_5`, PCM 16 kHz output, voice `JBFqnCBsd6RMkjVDRZzb` |
 
 TTS uses raw PCM (`pcm_16000`) so audio streams straight to PyAudio without decoding. The sample rate is deliberately the mic's 16 kHz rather than something higher: echo cancellation needs the far-end reference at the capture rate, and matching them in config beats resampling the reference on every audio chunk.
 

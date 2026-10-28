@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import threading
+from typing import Callable, Optional
 
 import numpy as np
 import pyaudio
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 class VoiceAgent:
 
-    def __init__(self):
+    def __init__(self, audio_callback: Optional[Callable[[bytes], None]] = None):
         self.echo = EchoCancellation(
             asr_config.sample_rate,
             # Playback buffer is the delay between us handing audio to the
@@ -32,7 +33,7 @@ class VoiceAgent:
         )
         self.asr = StreamingASR()
         self.llm = LLMAgent()
-        self.tts = StreamingTTS(echo=self.echo)
+        self.tts = StreamingTTS(echo=self.echo, audio_callback=audio_callback)
         self.is_running = False
         self._mic_error = None
         # Mic thread -> event loop. The pump drains this in the loop thread,
@@ -50,6 +51,10 @@ class VoiceAgent:
         except asyncio.QueueFull:
             self._frames.get_nowait()
             self._frames.put_nowait(data)
+
+    def offer_audio(self, data: bytes) -> None:
+        """Public interface for offering audio frames for processing."""
+        self._offer(data)
 
     def _mic_thread(self, loop) -> None:
         p = pyaudio.PyAudio()
@@ -175,24 +180,52 @@ class VoiceAgent:
                     await self.tts.speak(
                         "I couldn't find that. Try asking differently.")
 
-    async def run(self):
+    async def connect(self):
+        """Connect to ASR."""
         self.is_running = True
         logger.info("Connecting to ASR")
         await self.asr.connect()
         logger.info("Connected to ASR")
 
-        logger.info("Agent Greeting to user.")
-        await self.tts.speak("Hi there, How can i help you today?")
-
-        loop = asyncio.get_running_loop()
-        mic = threading.Thread(target=self._mic_thread, args=(loop,), daemon=True)
-        mic.start()
-
-        logger.info("Listening... Speak into your mic. Press Ctrl+C to stop.")
-
+    async def start_processing(self):
+        """Start the audio processing loops."""
         pump = asyncio.create_task(self._pump_audio())
         turn_task = asyncio.create_task(self._turn_loop())
         respond_task = asyncio.create_task(self._respond_loop())
+        self._tasks = (pump, turn_task, respond_task)
+
+    async def stop_processing(self):
+        """Stop the audio processing loops."""
+        self.is_running = False
+        if hasattr(self, '_tasks'):
+            for t in self._tasks:
+                t.cancel()
+            await asyncio.gather(*self._tasks, return_exceptions=True)
+
+    async def disconnect(self):
+        """Disconnect from ASR."""
+        await self.asr.disconnect()
+
+    def interrupt_playback(self):
+        """Interrupt current TTS playback."""
+        self.tts.interrupt()
+
+    async def run(self, use_mic: bool = True, speak_greeting: bool = True):
+        """Run the agent with terminal defaults (mic thread and greeting)."""
+        await self.connect()
+
+        if speak_greeting:
+            logger.info("Agent Greeting to user.")
+            await self.tts.speak("Hi there, How can i help you today?")
+
+        mic_thread = None
+        if use_mic:
+            loop = asyncio.get_running_loop()
+            mic_thread = threading.Thread(target=self._mic_thread, args=(loop,), daemon=True)
+            mic_thread.start()
+            logger.info("Listening... Speak into your mic. Press Ctrl+C to stop.")
+
+        await self.start_processing()
 
         try:
             while self.is_running:
@@ -200,15 +233,10 @@ class VoiceAgent:
                 if self._mic_error:
                     raise self._mic_error
         finally:
-            self.is_running = False
-            # Cancel before awaiting: the pump is parked on _frames.get() and
-            # would never notice is_running flipping on its own.
-            tasks = (pump, turn_task, respond_task)
-            for t in tasks:
-                t.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-            mic.join(timeout=2)
-            await self.asr.disconnect()
+            await self.stop_processing()
+            if mic_thread:
+                mic_thread.join(timeout=2)
+            await self.disconnect()
             if self._mic_error:
                 raise self._mic_error
 

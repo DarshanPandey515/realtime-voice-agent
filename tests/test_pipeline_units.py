@@ -22,6 +22,7 @@ def _bare_tts():
     from voice_agent.tts import StreamingTTS
     tts = StreamingTTS.__new__(StreamingTTS)
     tts._cancel = threading.Event()
+    tts._audio_callback = None
     tts._echo = None
     tts._play_lock = threading.Lock()
     tts._spoken = deque(maxlen=3)

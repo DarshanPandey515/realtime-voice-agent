@@ -16,15 +16,7 @@ uv run voice-agent      # or: .venv/bin/voice-agent
 
 The agent speaks a greeting, opens the mic and starts listening. Each turn is logged to the console as `user: ...` / `Assistant: ...`. `Ctrl+C` to stop.
 
-The optional browser testing interface uses the same ASR, LLM, turn handling and TTS components, with microphone audio sent over a WebSocket and generated audio routed back to the browser. Install and start it with:
-
-```bash
-uv sync --extra web                         # or: pip install -e '.[web]'
-cp .env.example .env                        # if not already configured
-uv run voice-agent-web                      # or: .venv/bin/voice-agent-web
-```
-
-Open `http://localhost:8000` and allow microphone access. The browser adapter bypasses AEC: there is no local playback reference available to the server, so incoming microphone audio is passed through unchanged. Browser mode therefore does not have the terminal pipeline's echo suppression. The interface is experimental; its interrupt button and transcript display are not connected to the live session logic.
+For browser-based testing, see [Browser-based testing](#browser-based-testing).
 
 ## How it works
 
@@ -39,12 +31,8 @@ Open `http://localhost:8000` and allow microphone access. The browser adapter by
 | `aec.py` | Echo cancellation — subtracts the agent's own voice from the mic |
 | `tools.py` | Tool implementations: bash allowlist, read file, project tree |
 | `config.py` | Model ids, voice id, sample rates, API keys |
-| `web_entry.py`, `web_server.py`, `browser_agent.py` | Optional FastAPI/WebSocket browser test interface and adapter around `VoiceAgent` |
-| `browser_aec.py`, `web_ui.html` | Browser audio pass-through (AEC disabled) and the served test page |
 
-**Terminal audio flow:** Microphone → PyAudio (16 kHz, linear16 PCM) → echo cancellation → WebRTC VAD → Deepgram streaming ASR → bounded turn queue → Groq-hosted LLM (sentence streaming, with tools) → ElevenLabs TTS → speaker. TTS audio is also supplied as the echo canceller's far-end reference. The VAD gate allows interruption during playback by detecting sustained speech on cleaned microphone audio.
-
-**Browser audio flow:** Browser microphone → Web Audio PCM conversion → WebSocket → shared `VoiceAgent` turn processing and Deepgram ASR → LLM → ElevenLabs TTS → WebSocket → browser. Browser mode reuses the turn processing and VAD, but bypasses AEC as described above. It does not use the terminal PyAudio microphone or speaker streams.
+**Audio flow:** Microphone → PyAudio (16 kHz, linear16 PCM) → echo cancellation → WebRTC VAD → Deepgram streaming ASR → turn queue → LLM (sentence streaming) → ElevenLabs TTS → speaker. The VAD gate allows interruption during playback by detecting sustained speech on the cleaned mic.
 
 A turn runs end of speech → transcription → the LLM streams sentence by sentence → each sentence plays as it lands. Voice activity during playback cuts the audio off instead of waiting for the sentence to finish; the reply to that interruption still waits for ASR to close your turn, so it can cut the agent off mid-sentence but not you mid-word.
 
@@ -55,7 +43,7 @@ All model ids, the voice id, sample rates and API keys live in `src/voice_agent/
 | Component | Default |
 |-----------|---------|
 | ASR | Deepgram `nova-3`, 16 kHz mic input, language code `en` |
-| LLM | Groq `openai/gpt-oss-20b` (reasoning effort `none`) |
+| LLM | Groq `qwen/qwen3.8-27b` (reasoning disabled) |
 | TTS | ElevenLabs `eleven_flash_v2_5`, PCM 16 kHz output, voice `JBFqnCBsd6RMkjVDRZzb` |
 
 TTS uses raw PCM (`pcm_16000`) so audio streams straight to PyAudio without decoding. The sample rate is deliberately the mic's 16 kHz rather than something higher: echo cancellation needs the far-end reference at the capture rate, and matching them in config beats resampling the reference on every audio chunk.
@@ -102,7 +90,7 @@ Read these with their limits attached:
 uv run pytest tests/test_pipeline_units.py -v   # no API keys, no audio device
 ```
 
-92 tests, no network: bash allowlist, output capping, turn-based history, sentence splitting, echo cancellation, self-echo rejection, and both barge-in paths.
+87 tests, no network: bash allowlist, output capping, turn-based history, sentence splitting, echo cancellation, self-echo rejection, and both barge-in paths.
 
 The self-echo loop is covered offline against a synthetic far-field echo. With AEC off, the agent's own voice trips the VAD barge-in gate on over half of all frames and cuts itself off mid-word; with AEC on, that falls to zero. What the tests cannot tell you is how AEC performs in your actual room — that needs a speaker.
 
@@ -111,6 +99,31 @@ To re-tune the barge-in gate for your own mic, gain and room:
 ```bash
 uv run python scripts/calibrate_vad.py path/to/speech.wav
 ```
+
+## Browser-based testing
+
+A browser UI is available for testing the agent without the terminal. The browser client uses the same underlying agent pipeline and configuration as the terminal mode, with WebSocket transport and browser microphone/speaker I/O.
+
+**Installation:**
+
+```bash
+uv sync --extra web    # install FastAPI, Uvicorn, WebSockets
+```
+
+**Start the web server:**
+
+```bash
+uv run voice-agent-web    # starts on http://localhost:8000
+```
+
+Open http://localhost:8000 in a browser to access the UI. The browser session provides microphone access, audio transmission, TTS playback, and a conversation transcript.
+
+**Architecture:** The browser adapter uses the existing `VoiceAgent` class through public interfaces (`offer_audio`, `connect`, `start_processing`, `stop_processing`, `disconnect`, `interrupt_playback`). Audio from the browser is converted to 16 kHz linear16 PCM and fed into the same AEC → VAD → ASR → LLM → TTS pipeline. TTS output is streamed back to the browser via WebSocket instead of PyAudio.
+
+**Limitations in browser mode:**
+
+- Echo cancellation is bypassed because the browser has no local speaker to provide a far-end reference to the AEC. The agent may hear itself if audio is played through the same device that captures the microphone. This does not affect terminal mode.
+- Each browser session creates a separate agent instance with isolated state. Disconnecting cancels tasks and disconnects the ASR session.
 
 ## Known limits
 
@@ -121,7 +134,7 @@ uv run python scripts/calibrate_vad.py path/to/speech.wav
 - The self-echo guard is a text-similarity threshold, not an acoustic test. Say something close to the agent's last sentence and your turn gets dropped; raise `aec_config.echo_match_ratio` to be stricter. It holds to roughly 30% transcription error, but echo degraded past the point where ASR recognises words at all is not catchable this way — that case depends entirely on AEC having removed it first.
 - `asr_config.vad_threshold` and `aec_config.warmup_ms` are calibrated against one microphone and one room. They are the knobs to turn if it misbehaves for you, and `scripts/calibrate_vad.py` measures the first from a clip.
 - `find`/`grep` can stall a turn silently for up to 15 s; nothing tells the user it is waiting.
-- Tool calls are capped at 6 per turn (`llm_config.tool_call_limit`), but a turn that hits the cap is a turn that mostly failed. `gpt-oss-20b` will happily loop tools — 35 calls in 107 s was measured — so treat the cap as a floor on bad behaviour, not a sign the agent is working.
+- Tool calls are capped at 6 per turn (`llm_config.tool_call_limit`), but a turn that hits the cap is a turn that mostly failed. Models will happily loop tools — 35 calls in 107 s was measured — so treat the cap as a floor on bad behaviour, not a sign the agent is working.
 - Full user speech is written to logs at INFO.
 
 ## What we measured

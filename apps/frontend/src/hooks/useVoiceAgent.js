@@ -31,19 +31,24 @@ export function useVoiceAgent() {
     wsRef.current = ws
     ws.binaryType = 'arraybuffer'
 
-    ws.onopen = () => setConnected(true)
+    // only apply state from the socket that is currently active
+    const isCurrent = () => wsRef.current === ws
+
+    ws.onopen = () => { if (isCurrent()) setConnected(true) }
     ws.onclose = () => {
-      setConnected(false)
-      setStatus('offline')
+      if (isCurrent()) {
+        setConnected(false)
+        setStatus('offline')
+      }
     }
-    ws.onerror = () => setStatus('error')
+    ws.onerror = () => { if (isCurrent()) setStatus('error') }
 
     ws.onmessage = (event) => {
+      if (!isCurrent()) return
       if (event.data instanceof ArrayBuffer || event.data instanceof Blob) return
 
       try {
         const data = JSON.parse(event.data)
-
         if (data.type === 'status') {
           setStatus(data.state || data.status || 'ready')
         } else if (data.type === 'transcript') {
@@ -60,7 +65,15 @@ export function useVoiceAgent() {
       }
     }
 
-    return () => ws.close()
+    return () => {
+      wsRef.current = null
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.close()
+      } else if (ws.readyState === WebSocket.CONNECTING) {
+        // don't close mid-handshake — that's the console warning + server disconnect
+        ws.addEventListener('open', () => ws.close(), { once: true })
+      }
+    }
   }, [])
 
   useEffect(() => {
@@ -68,12 +81,11 @@ export function useVoiceAgent() {
     const id = setInterval(() => {
       setLevel(active ? 0.35 + Math.random() * 0.6 : 0.03)
     }, 110)
-
     return () => clearInterval(id)
   }, [status])
 
   const send = useCallback((message) => {
-    if (wsRef.current?.readyState === 1) {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(message))
     }
   }, [])

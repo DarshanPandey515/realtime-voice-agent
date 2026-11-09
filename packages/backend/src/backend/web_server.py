@@ -53,9 +53,13 @@ class WebServer:
                 except Exception as e:
                     logger.debug("Failed to queue audio chunk: %s", e)
 
+            async def transcript_callback(message: dict):
+                await websocket.send_json(message)
+
             # Create agent instance for this session
-            agent = BrowserVoiceAgent(audio_callback)
+            agent = BrowserVoiceAgent(audio_callback, transcript_callback)
             self.active_connections[websocket] = agent
+            first_audio_received = False
 
             # Receive both JSON control messages and binary audio frames.
             while True:
@@ -66,6 +70,9 @@ class WebServer:
 
                     audio_data = message.get("bytes")
                     if audio_data is not None:
+                        if not first_audio_received:
+                            logger.info("First browser microphone frame received (%d bytes)", len(audio_data))
+                            first_audio_received = True
                         agent.offer_audio(audio_data)
                         continue
 
@@ -88,14 +95,16 @@ class WebServer:
                             await agent.start_session()
                             session_started = True
                             await websocket.send_json({"type": "session_started"})
+                            await websocket.send_json({"type": "status", "state": "listening"})
                             asyncio.create_task(agent.greet())
                         continue
                     if command_type == "session_stop":
                         if session_started:
+                            agent.interrupt_playback()
                             await agent.stop_session()
                             session_started = False
                         await websocket.send_json({"type": "session_ended"})
-                        break
+                        continue
                     if command_type == "interrupt" and session_started:
                         agent.interrupt_playback()
                 except WebSocketDisconnect:

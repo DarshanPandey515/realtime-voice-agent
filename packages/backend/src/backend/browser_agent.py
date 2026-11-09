@@ -4,6 +4,7 @@ This adapter uses the existing VoiceAgent with browser-specific AEC and TTS rout
 """
 
 import logging
+from deepgram.listen.v1.types import ListenV1Results
 from voice_agent.aec import EchoCancellation
 from backend.browser_aec import BrowserAEC
 from voice_agent.config import tts_config
@@ -21,9 +22,10 @@ class BrowserVoiceAgent:
     - Reuses all ASR, LLM, VAD, and turn-processing logic unchanged
     """
 
-    def __init__(self, audio_callback):
+    def __init__(self, audio_callback, transcript_callback=None):
         """Initialize browser agent with audio callback for WebSocket transmission."""
         self._audio_callback = audio_callback
+        self._transcript_callback = transcript_callback
         self._agent = None
 
     def _create_agent(self):
@@ -36,6 +38,36 @@ class BrowserVoiceAgent:
 
         # Create VoiceAgent with audio callback
         agent = VoiceAgent(audio_callback=internal_audio_callback)
+
+        if self._transcript_callback:
+            original_asr_handler = agent.asr.on_message
+
+            async def on_asr_message(message, *args, **kwargs):
+                if isinstance(message, ListenV1Results) and message.channel and message.channel.alternatives:
+                    text = message.channel.alternatives[0].transcript
+                    if text:
+                        await self._transcript_callback({
+                            "type": "transcript",
+                            "speaker": "user",
+                            "text": text,
+                            "is_final": message.is_final,
+                        })
+                await original_asr_handler(message, *args, **kwargs)
+
+            agent.asr.on_message = on_asr_message
+
+            original_sentence_handler = agent._on_sentence
+
+            async def on_agent_sentence(sentence):
+                await self._transcript_callback({
+                    "type": "transcript",
+                    "speaker": "agent",
+                    "text": sentence,
+                    "is_final": True,
+                })
+                await original_sentence_handler(sentence)
+
+            agent._on_sentence = on_agent_sentence
 
         # Replace EchoCancellation with BrowserAEC (no far-end reference)
         agent.echo = BrowserAEC(
@@ -76,6 +108,13 @@ class BrowserVoiceAgent:
 
     async def greet(self):
         """Welcome the browser user after the session is ready."""
+        if self._transcript_callback:
+            await self._transcript_callback({
+                "type": "transcript",
+                "speaker": "agent",
+                "text": "Hi there, how can I help you today?",
+                "is_final": True,
+            })
         await self.agent.tts.speak("Hi there, how can I help you today?")
 
     def offer_audio(self, data: bytes):

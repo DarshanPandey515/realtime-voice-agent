@@ -57,13 +57,40 @@ class WebServer:
             # Start the agent session
             await agent.start_session()
 
-            # Receive audio from browser
+            # Receive both JSON control messages and binary audio frames.
             while True:
                 try:
-                    # Receive audio data (bytes)
-                    data = await websocket.receive_bytes()
-                    # Offer audio to agent for processing
-                    agent.offer_audio(data)
+                    message = await websocket.receive()
+                    if message.get("type") == "websocket.disconnect":
+                        break
+
+                    audio_data = message.get("bytes")
+                    if audio_data is not None:
+                        agent.offer_audio(audio_data)
+                        continue
+
+                    text = message.get("text")
+                    if text is None:
+                        continue
+
+                    import json
+
+                    try:
+                        command = json.loads(text)
+                    except json.JSONDecodeError as e:
+                        await websocket.send_json({"type": "error", "message": "Invalid JSON control message"})
+                        logger.warning("Ignoring invalid WebSocket JSON: %s", e)
+                        continue
+
+                    command_type = command.get("type")
+                    if command_type == "session_start":
+                        # The browser session is started when the socket connects.
+                        continue
+                    if command_type == "session_stop":
+                        await websocket.send_json({"type": "session_ended"})
+                        break
+                    if command_type == "interrupt":
+                        agent.interrupt_playback()
                 except WebSocketDisconnect:
                     break
                 except Exception as e:

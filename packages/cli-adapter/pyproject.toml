@@ -1,0 +1,19 @@
+[project]
+name = "cli-adapter"
+version = "0.1.0"
+description = "CLI adapter for voice agent (PyAudio)"
+requires-python = ">=3.12"
+dependencies = [
+    "voice-agent",
+    "pyaudio>=0.2.14",
+]
+
+[project.scripts]
+voice-agent = "cli_adapter.main:main"
+
+[tool.uv.sources]
+voice-agent = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"

@@ -9,10 +9,21 @@ A real-time voice assistant. Speak, it transcribes, runs a tool-calling LLM agen
 Needs Python 3.12+, a working microphone and speaker, and API keys for Deepgram (STT), Groq (LLM) and ElevenLabs (TTS).
 
 ```bash
-uv sync                 # or: pip install -e .
-cp .env.example .env    # then fill in your API keys
-uv run voice-agent      # or: .venv/bin/voice-agent
+uv sync --all-packages          # install all workspace packages
+cp .env.example .env            # then fill in your API keys
+uv run --package cli-adapter voice-agent   # terminal mode
 ```
+
+## Monorepo layout
+
+- `packages/voice-agent` — transport-independent core (ASR, LLM, TTS, VAD, AEC, `VoiceAgent`)
+- `packages/cli-adapter` — terminal client (`voice-agent` command, PyAudio)
+- `packages/backend` — FastAPI backend (`uvicorn backend.main:app`)
+- `apps/frontend` — React + Vite + Tailwind UI (`npm run dev` in `apps/frontend`)
+
+Browser backend: `uv run --package backend uvicorn backend.main:app --reload`
+Browser frontend: `cd apps/frontend && npm install && npm run dev`
+See `docs/websocket-protocol.md` for the WebSocket contract.
 
 The agent speaks a greeting, opens the mic and starts listening. Each turn is logged to the console as `user: ...` / `Assistant: ...`. `Ctrl+C` to stop.
 

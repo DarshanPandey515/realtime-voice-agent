@@ -1,43 +1,9 @@
-[project]
-name = "voice-agent"
-version = "0.1.0"
-description = "Add your description here"
-readme = "README.md"
-authors = [
-    { name = "Darshan Pandey", email = "pandeydarshan61@gmail.com" }
+[tool.uv.workspace]
+members = [
+    "packages/voice-agent",
+    "packages/cli-adapter",
+    "packages/backend",
 ]
-requires-python = ">=3.12"
-dependencies = [
-    "deepgram-sdk>=3.7.0",
-    "elevenlabs>=2.66.0",
-    "google-genai>=2.22.0",
-    "groq>=1.7.0",
-    "pyaudio>=0.2.14",
-    "pydantic-ai>=2.38.0",
-    "pywebrtc-audio>=0.2.0",
-]
-
-[project.optional-dependencies]
-web = [
-    "fastapi>=0.104.0",
-    "uvicorn[standard]>=0.23.0",
-    "websockets>=12.0",
-]
-
-[project.scripts]
-voice-agent = "voice_agent:main"
-voice-agent-web = "voice_agent.web_entry:main"
-
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
-asyncio_default_fixture_loop_scope = "function"
-markers = [
-    "latency: latency benchmark tests (require API keys)",
-]
-
-[build-system]
-requires = ["uv_build>=0.12.5,<0.13.0"]
-build-backend = "uv_build"
 
 [dependency-groups]
 dev = [

@@ -30,3 +30,9 @@ jargons.md
 implementation.md
 .personal-docs/
 node_modules/
+
+# Agent skills (local only)
+.agents/
+.claude/
+.devin/skills/
+skills-lock.json

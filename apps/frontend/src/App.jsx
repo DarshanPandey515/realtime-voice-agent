@@ -23,7 +23,7 @@ function Visualizer({ level }) {
         bars[i] += (target - bars[i]) * 0.22
         const bh = Math.max(3, bars[i] * h * 0.92)
         const g = ctx.createLinearGradient(0, h, 0, h - bh)
-        g.addColorStop(0, '#0891b2'); g.addColorStop(0.6, '#22d3ee'); g.addColorStop(1, '#34d399')
+        g.addColorStop(0, '#1f3a35'); g.addColorStop(0.6, '#122624'); g.addColorStop(1, '#c8553d')
         ctx.fillStyle = g
         ctx.fillRect(i * bw + 1.5, h - bh, bw - 3, bh)
       }
@@ -65,7 +65,7 @@ export default function App() {
     ws.onclose = () => { setConnected(false); setStatus('offline') }
     ws.onerror = () => setStatus('error')
     ws.onmessage = (e) => {
-      if (e.data instanceof ArrayBuffer || e.data instanceof Blob) return // TTS PCM, handled by audio pipeline later
+      if (e.data instanceof ArrayBuffer || e.data instanceof Blob) return
       try {
         const d = JSON.parse(e.data)
         if (d.type === 'status') setStatus(d.state || d.status || 'ready')
@@ -108,60 +108,82 @@ export default function App() {
   const meta = STATUS_META[status] || STATUS_META.offline
   const dotColor = connected ? '#34d399' : '#f43f5e'
 
+  function getStatusText() {
+    if (status === 'speaking') return <span style={{ color: '#fbbf24' }} className="text-glow">Agent is speaking</span>
+    if (status === 'listening') return <span style={{ color: 'var(--snow)' }}>Listening…</span>
+    if (status === 'thinking') return <span style={{ color: 'var(--snow)' }}>Processing</span>
+    if (status === 'ready') return <span style={{ color: 'var(--snow)' }}>Standing by</span>
+    return <span style={{ color: 'var(--snow)' }}>Voice Agent</span>
+  }
+
   return (
     <div className="min-h-screen relative overflow-hidden">
       <div className="grid-bg absolute inset-0 pointer-events-none" />
-      <div className="absolute inset-x-0 top-0 h-72 pointer-events-none" style={{ background: 'radial-gradient(ellipse 60% 100% at 50% -20%, color-mix(in srgb, var(--accent) 14%, transparent), transparent)' }} />
+      <div className="absolute inset-x-0 top-0 h-72 pointer-events-none" style={{ background: 'radial-gradient(ellipse 60% 100% at 50% -20%, color-mix(in srgb, var(--ember) 14%, transparent), transparent)' }} />
 
-      <div className="relative max-w-3xl mx-auto px-5 py-8 sm:py-10">
+      {/* Full-bleed cinematic hero */}
+      <section className="hero-full relative overflow-hidden mb-8 min-h-[55vh] sm:min-h-[65vh]">
+        <div className="absolute inset-0 bg-gradient-to-t from-[var(--pine-deep)] to-transparent opacity-90" />
+        <div className="relative h-full flex flex-col items-center justify-end py-16 sm:py-20 px-5">
+          {/* Glass eyebrow */}
+          <p className="uppercase text-xs tracking-widest mb-6 text-center" style={{ color: 'var(--snow)' }}>Voice Agent</p>
+
+          {/* Two-line headline */}
+          <p className="text-3xl sm:text-4xl font-extrabold tracking-tight leading-tight mb-4 text-center" style={{ color: 'var(--snow)' }}>
+            {getStatusText()}
+          </p>
+
+          {/* Actions: primary CTA + secondary outlined */}
+          <div className="flex gap-3 mb-10 sm:mb-16">
+            <button
+              onClick={() => send({ type: 'session_start' })}
+              disabled={!connected}
+              className="btn btn-primary"
+            >
+              <Mic size={16} strokeWidth={2.6} /> Start
+            </button>
+            <button
+              onClick={() => setDark(!dark)}
+              className="btn btn-outline"
+              aria-label="Toggle theme"
+            >
+              {dark ? <Sun size={17} strokeWidth={2.4} /> : <Moon size={17} strokeWidth={2.4} />}
+            </button>
+          </div>
+
+          {/* Status chip */}
+          <span className={`chip ${meta.cls}`} style={{ position: 'absolute', bottom: 10, right: 10 }}>{meta.label}</span>
+
+          <Visualizer level={level} />
+
+          <div className="flex items-center gap-2 mt-4 text-[10px] font-semibold tracking-[0.25em] uppercase" style={{ color: 'var(--sand)', position: 'absolute', bottom: 10, left: 10 }}>
+            <Radio size={12} strokeWidth={2.5} />
+            16 kHz · PCM · Deepgram → Groq → ElevenLabs
+          </div>
+        </div>
+      </section>
+
+      {/* Contained page content */}
+      <div className="relative max-w-6xl mx-auto px-5 py-8 sm:py-10">
         {/* Header */}
         <header className="rise flex items-center justify-between mb-8">
           <div className="flex items-center gap-3.5">
-            <div className="panel-inset p-3" style={{ color: 'var(--accent)' }}>
+            <div className="panel-inset p-2" style={{ color: 'var(--pine)' }}>
               <AudioLines size={22} strokeWidth={2.2} />
             </div>
             <div>
-              <h1 className="text-lg font-extrabold tracking-[0.18em] uppercase leading-none">Voice Agent</h1>
-              <p className="text-[10px] font-semibold tracking-[0.32em] uppercase mt-1" style={{ color: 'var(--ink-dim)' }}>Realtime Console</p>
+              <h1 className="text-lg font-extrabold tracking-[0.18em] uppercase leading-none" style={{ color: 'var(--pine)' }}>Voice Agent</h1>
+              <p className="text-[10px] font-semibold tracking-[0.32em] uppercase mt-1" style={{ color: 'var(--sand)' }}>Realtime Console</p>
             </div>
           </div>
           <button
             onClick={() => setDark(!dark)}
-            className="btn btn-ghost !p-3 !rounded-xl"
+            className="btn btn-ghost p-2 rounded-full"
             aria-label="Toggle theme"
           >
             {dark ? <Sun size={17} strokeWidth={2.4} /> : <Moon size={17} strokeWidth={2.4} />}
           </button>
         </header>
-
-        {/* Hero / status panel */}
-        <section className="panel rise rise-1 p-6 sm:p-7 mb-5 relative overflow-hidden">
-          <div className="flex items-start justify-between gap-4 mb-5">
-            <div>
-              <div className="flex items-center gap-2.5 mb-2">
-                <span className="dot" style={{ background: dotColor, color: dotColor }} />
-                <span className="text-xs font-bold tracking-[0.22em] uppercase" style={{ color: connected ? '#34d399' : '#f43f5e' }}>
-                  {connected ? 'Link Active' : 'Link Down'}
-                </span>
-              </div>
-              <p className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-                {status === 'speaking' ? <span className="text-glow" style={{ color: '#fbbf24' }}>Agent is speaking</span>
-                 : status === 'listening' ? <span style={{ color: 'var(--accent)' }}>Listening…</span>
-                 : status === 'thinking' ? 'Processing'
-                 : status === 'ready' ? 'Standing by'
-                 : 'Voice Agent'}
-              </p>
-            </div>
-            <span className={`chip ${meta.cls}`}>{meta.label}</span>
-          </div>
-
-          <Visualizer level={level} />
-
-          <div className="flex items-center gap-2 mt-4 text-[10px] font-semibold tracking-[0.25em] uppercase" style={{ color: 'var(--ink-dim)' }}>
-            <Radio size={12} strokeWidth={2.5} />
-            16 kHz · PCM · Deepgram → Groq → ElevenLabs
-          </div>
-        </section>
 
         {/* Controls */}
         <section className="rise rise-2 grid grid-cols-3 gap-3 mb-5">
@@ -179,27 +201,30 @@ export default function App() {
         {/* Transcript */}
         <section className="panel rise rise-3 p-5 sm:p-6">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-[11px] font-extrabold tracking-[0.3em] uppercase" style={{ color: 'var(--ink-dim)' }}>Transcript</h2>
-            <button onClick={() => setMessages([])} className="p-2 rounded-lg transition-colors hover:bg-[var(--surface-2)]" style={{ color: 'var(--ink-dim)' }} aria-label="Clear transcript">
+            <h2 className="section-headline">Transcript</h2>
+            <button onClick={() => setMessages([])} className="p-2 rounded-lg transition-colors hover:bg-[color-mix(in srgb, var(--sand) 10%, transparent)]" style={{ color: 'var(--sand)' }} aria-label="Clear transcript">
               <Trash2 size={15} strokeWidth={2.4} />
             </button>
           </div>
           <div ref={scrollRef} className="scroll h-72 overflow-y-auto space-y-2.5 pr-1">
             {messages.length === 0 && (
-              <p className="text-sm italic" style={{ color: 'var(--ink-dim)' }}>Awaiting transmission…</p>
+              <p className="text-sm italic" style={{ color: 'var(--sand)' }}>Awaiting transmission…</p>
             )}
-            {messages.map((m, i) => (
-              <div key={i} className={`msg flex gap-2.5 ${m.role === 'agent' ? 'msg-agent' : 'msg-user'} ${m.partial ? 'msg-partial' : ''}`}>
-                <span className="mt-0.5 flex-none" style={{ color: m.role === 'agent' ? '#34d399' : 'var(--accent)' }}>
-                  {m.role === 'agent' ? <Bot size={15} strokeWidth={2.4} /> : <User size={15} strokeWidth={2.4} />}
-                </span>
-                <span>{m.text}</span>
-              </div>
-            ))}
+            {messages.map((m, i) => {
+              const speakerColor = m.role === 'agent' ? 'var(--pine)' : 'var(--ember)'
+              return (
+                <div key={i} className={`msg flex gap-2.5 ${m.role === 'agent' ? 'msg-agent' : 'msg-user'} ${m.partial ? 'msg-partial' : ''}`}>
+                  <span className="mt-0.5 flex-none" style={{ color: speakerColor }}>
+                    {m.role === 'agent' ? <Bot size={15} strokeWidth={2.4} /> : <User size={15} strokeWidth={2.4} />}
+                  </span>
+                  <span>{m.text}</span>
+                </div>
+              )
+            })}
           </div>
         </section>
 
-        <footer className="rise rise-4 mt-8 text-center text-[10px] font-semibold tracking-[0.3em] uppercase" style={{ color: 'var(--ink-dim)' }}>
+        <footer className="rise rise-4 mt-8 text-center text-[10px] font-semibold tracking-[0.3em] uppercase" style={{ color: 'var(--sand)' }}>
           Voice Agent Orchestrator · Realtime Pipeline
         </footer>
       </div>

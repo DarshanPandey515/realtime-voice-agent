@@ -74,6 +74,10 @@ class BrowserVoiceAgent:
         await self.agent.disconnect()
         logger.info("Browser session stopped")
 
+    async def greet(self):
+        """Welcome the browser user after the session is ready."""
+        await self.agent.tts.speak("Hi there, how can I help you today?")
+
     def offer_audio(self, data: bytes):
         """Offer audio data for processing (called from WebSocket handler)."""
         self.agent.offer_audio(data)

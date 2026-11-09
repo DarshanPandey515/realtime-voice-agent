@@ -23,7 +23,9 @@ class WebServer:
         await websocket.accept()
         agent = None
         sender = None
+        session_started = False
         try:
+            loop = asyncio.get_running_loop()
             # Create queue for audio chunks from TTS thread to event loop
             audio_queue = asyncio.Queue(maxsize=100)
 
@@ -40,22 +42,20 @@ class WebServer:
             sender = asyncio.create_task(send_audio_task())
 
             # Create audio callback for this session (synchronous, called from TTS thread)
+            def queue_audio(chunk: bytes):
+                if audio_queue.full():
+                    audio_queue.get_nowait()
+                audio_queue.put_nowait(chunk)
+
             def audio_callback(chunk: bytes):
                 try:
-                    loop = asyncio.get_running_loop()
-                    loop.call_soon_threadsafe(audio_queue.put_nowait, chunk)
+                    loop.call_soon_threadsafe(queue_audio, chunk)
                 except Exception as e:
                     logger.debug("Failed to queue audio chunk: %s", e)
 
             # Create agent instance for this session
             agent = BrowserVoiceAgent(audio_callback)
             self.active_connections[websocket] = agent
-
-            # Send session started message
-            await websocket.send_json({"type": "session_started"})
-
-            # Start the agent session
-            await agent.start_session()
 
             # Receive both JSON control messages and binary audio frames.
             while True:
@@ -84,12 +84,19 @@ class WebServer:
 
                     command_type = command.get("type")
                     if command_type == "session_start":
-                        # The browser session is started when the socket connects.
+                        if not session_started:
+                            await agent.start_session()
+                            session_started = True
+                            await websocket.send_json({"type": "session_started"})
+                            asyncio.create_task(agent.greet())
                         continue
                     if command_type == "session_stop":
+                        if session_started:
+                            await agent.stop_session()
+                            session_started = False
                         await websocket.send_json({"type": "session_ended"})
                         break
-                    if command_type == "interrupt":
+                    if command_type == "interrupt" and session_started:
                         agent.interrupt_playback()
                 except WebSocketDisconnect:
                     break
@@ -105,7 +112,7 @@ class WebServer:
             await websocket.send_json({"type": "error", "message": str(e)})
         finally:
             # Cleanup
-            if agent:
+            if agent and session_started:
                 await agent.stop_session()
             if websocket in self.active_connections:
                 del self.active_connections[websocket]

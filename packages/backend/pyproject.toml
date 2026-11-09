@@ -13,6 +13,7 @@ dependencies = [
 
 [project.scripts]
 voice-backend = "backend.main:main"
+voice-agent-web = "backend.main:main"
 
 [tool.uv.sources]
 voice-agent = { workspace = true }

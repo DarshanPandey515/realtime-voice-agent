@@ -7,7 +7,7 @@ import { useVoiceAgent } from './hooks/useVoiceAgent'
 
 export default function App() {
   const { dark, toggle } = useTheme()
-  const { connected, status, messages, level, send, clear } = useVoiceAgent()
+  const { connected, status, messages, level, start, stop, send, clear } = useVoiceAgent()
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)', color: 'var(--ink)' }}>
@@ -17,8 +17,8 @@ export default function App() {
           <Hero status={status} level={level} dark={dark} />
           <Controls
             disabled={!connected}
-            onStart={() => send({ type: 'session_start' })}
-            onStop={() => send({ type: 'session_stop' })}
+            onStart={start}
+            onStop={stop}
             onInterrupt={() => send({ type: 'interrupt' })}
           />
           <Transcript messages={messages} onClear={clear} />

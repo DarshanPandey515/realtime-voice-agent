@@ -1,0 +1,34 @@
+[project]
+name = "voice-agent"
+version = "0.1.0"
+description = "Transport-independent voice agent core"
+readme = "README.md"
+authors = [
+    { name = "Darshan Pandey", email = "pandeydarshan61@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "deepgram-sdk>=3.7.0",
+    "elevenlabs>=2.66.0",
+    "groq>=1.7.0",
+    "pydantic-ai>=2.38.0",
+    "pywebrtc-audio>=0.2.0",
+    "pyaudio>=0.2.14",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "latency: latency benchmark tests (require API keys)",
+]

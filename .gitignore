@@ -12,6 +12,7 @@ venv/
 build/
 dist/
 *.egg
+.pytest_cache
 
 # Runtime artifacts
 output.mp3
@@ -34,5 +35,6 @@ node_modules/
 # Agent skills (local only)
 .agents/
 .claude/
+.devin/
 .devin/skills/
 skills-lock.json

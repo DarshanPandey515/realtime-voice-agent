@@ -27,6 +27,7 @@ def _bare_tts():
     tts._play_lock = threading.Lock()
     tts._spoken = deque(maxlen=3)
     tts._playback_started_at = 0.0
+    tts._playing_turn_id = None
     return tts
 
 
@@ -382,7 +383,7 @@ def test_a_turn_of_only_promises_gets_an_answer_instead():
 
     spoken = []
 
-    async def fake_speak(text):
+    async def fake_speak(text, turn_id=None):
         spoken.append(text)
 
     agent.tts.speak = fake_speak
@@ -416,7 +417,7 @@ def test_a_turn_of_only_promises_gets_an_answer_instead():
         lambda text, cb: cb("Let me check that for you."))})()
     spoken2 = []
 
-    async def fake_speak2(text):
+    async def fake_speak2(text, turn_id=None):
         spoken2.append(text)
 
     agent2.tts.speak = fake_speak2
@@ -441,7 +442,7 @@ def test_a_real_answer_is_not_replaced():
 
     spoken = []
 
-    async def fake_speak(text):
+    async def fake_speak(text, turn_id=None):
         spoken.append(text)
 
     agent.tts.speak = fake_speak
@@ -1060,8 +1061,9 @@ class _FakeTTS:
     def __init__(self):
         self.spoken = []
         self.interrupts = 0
+        self.playing_turn_id = None
 
-    async def speak(self, text):
+    async def speak(self, text, turn_id=None):
         self.spoken.append(text)
         await asyncio.sleep(0)
 
@@ -1079,11 +1081,18 @@ def _bare_agent():
     agent.tts = _FakeTTS()
     agent.is_running = True
     agent._turns = asyncio.Queue(maxsize=1)
-    agent._barge_in = asyncio.Event()
     agent._vad = _FakeVAD([])
     agent._voice_frames = 0
+    agent._user_speech_active = False
     agent._turn_id = 0
-    agent._active_turn_task = None
+    agent._active_response_task = None
+    agent._active_turn_id = None
+    agent._current_turn_id = None
+    agent._playback_turn_id = None
+    agent._browser_playback_managed = False
+    agent._playback_interrupt_callback = None
+    agent._cancel_reasons = {}
+    agent._said_anything = False
     return agent
 
 
@@ -1129,9 +1138,10 @@ def test_barge_in_drops_rest_of_reply_and_answers_the_new_turn():
         task = asyncio.create_task(agent._respond_loop())
         await first_sentence_spoken.wait()
         # a new turn arrives while the agent is still talking
-        agent.tts.interrupt()
-        agent._barge_in.set()
+        agent._playback_turn_id = agent._current_turn_id
+        agent._browser_playback_managed = True
         await agent._turns.put("second")
+        agent._cancel_current_turn("new_utterance")
         await asyncio.sleep(0.1)
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
@@ -1172,7 +1182,144 @@ def test_turn_queue_drops_stale_turn():
         await asyncio.gather(task, return_exceptions=True)
 
     asyncio.run(run())
-    assert agent.tts.interrupts >= 1
+    assert agent._turn_id == 0
+
+
+def test_vad_emits_one_onset_per_continuous_speech():
+    agent = _bare_agent()
+    agent._vad = _FakeVAD([0.9, 0.9, 0.9, 0.1, 0.9, 0.9])
+
+    from voice_agent.config import asr_config
+
+    original = asr_config.vad_onset_frames
+    asr_config.vad_onset_frames = 2
+    try:
+        frame = np.zeros(800, dtype=np.int16).tobytes()
+        assert [agent._is_user_speech(frame) for _ in range(6)] == [
+            False, True, False, False, False, True,
+        ]
+    finally:
+        asr_config.vad_onset_frames = original
+
+
+@pytest.mark.asyncio
+async def test_vad_onset_before_playback_cannot_cancel_later_response():
+    agent = _bare_agent()
+    agent._current_turn_id = 11
+    agent._active_turn_id = 11
+    agent._browser_playback_managed = True
+
+    async def wait_forever():
+        await asyncio.Event().wait()
+
+    active = asyncio.create_task(wait_forever())
+    agent._active_response_task = active
+    agent._vad = _FakeVAD([0.9, 0.9, 0.9])
+    from voice_agent.config import asr_config
+    onset_frames = asr_config.vad_onset_frames
+    asr_config.vad_onset_frames = 2
+    try:
+        frame = np.zeros(800, dtype=np.int16).tobytes()
+        assert agent._is_user_speech(frame) is False
+        assert agent._is_user_speech(frame) is True
+        # Playback begins later while this same continuous speech remains active.
+        agent._playback_turn_id = 11
+        assert agent._is_user_speech(frame) is False
+        assert not active.cancelling()
+    finally:
+        asr_config.vad_onset_frames = onset_frames
+        active.cancel()
+        await asyncio.gather(active, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_turn_cannot_emit_stale_sentence():
+    agent = _bare_agent()
+    agent._current_turn_id = 4
+    agent._cancel_reasons[4] = "new_utterance"
+
+    assert await agent._on_sentence("stale answer", turn_id=4) is False
+    assert agent.tts.spoken == []
+
+
+def test_old_playback_stop_cannot_clear_newer_turn_state():
+    agent = _bare_agent()
+    agent._current_turn_id = 12
+    agent.set_playback_state(True, 12)
+    agent.set_playback_state(False, 11)
+
+    assert agent._playback_turn_id == 12
+    assert agent.is_turn_current(12)
+
+
+@pytest.mark.asyncio
+async def test_vad_during_inference_does_not_cancel_without_playback():
+    agent = _bare_agent()
+    agent._browser_playback_managed = True
+    agent._current_turn_id = 7
+    agent._active_turn_id = 7
+    async def wait_forever():
+        await asyncio.Event().wait()
+
+    agent._active_response_task = asyncio.create_task(wait_forever())
+    agent._vad = _FakeVAD([0.9, 0.9])
+    agent.echo = type("Echo", (), {"process": staticmethod(lambda frame: frame)})()
+
+    class FakeASR:
+        async def stream_audio(self, _frame):
+            if not hasattr(self, "count"):
+                self.count = 0
+            self.count += 1
+            if self.count == 2:
+                agent.is_running = False
+
+    agent.asr = FakeASR()
+    agent._frames = asyncio.Queue()
+    frame = np.zeros(800, dtype=np.int16).tobytes()
+    await agent._frames.put(frame)
+    await agent._frames.put(frame)
+    await agent._pump_audio()
+
+    assert not agent._active_response_task.cancelled()
+    agent._active_response_task.cancel()
+    await asyncio.gather(agent._active_response_task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_vad_interrupts_confirmed_browser_playback_once():
+    agent = _bare_agent()
+    agent._browser_playback_managed = True
+    agent._current_turn_id = 9
+    agent._active_turn_id = 9
+    async def wait_forever():
+        await asyncio.Event().wait()
+
+    active = asyncio.create_task(wait_forever())
+    agent._active_response_task = active
+    agent._playback_turn_id = 9
+    sent_interrupts = []
+    agent._playback_interrupt_callback = sent_interrupts.append
+    agent._vad = _FakeVAD([0.9, 0.9, 0.9])
+    agent.echo = type("Echo", (), {"process": staticmethod(lambda frame: frame)})()
+
+    class FakeASR:
+        async def stream_audio(self, _frame):
+            if not hasattr(self, "count"):
+                self.count = 0
+            self.count += 1
+            if self.count == 3:
+                agent.is_running = False
+
+    agent.asr = FakeASR()
+    agent._frames = asyncio.Queue()
+    frame = np.zeros(800, dtype=np.int16).tobytes()
+    for _ in range(3):
+        await agent._frames.put(frame)
+    await agent._pump_audio()
+
+    assert sent_interrupts == [9]
+    await asyncio.gather(active, return_exceptions=True)
+    assert active.cancelled()
 
 @pytest.mark.asyncio
 async def test_barge_in_cancels_active_response_and_keeps_worker_available():
@@ -1194,19 +1341,28 @@ async def test_barge_in_cancels_active_response_and_keeps_worker_available():
     agent = VoiceAgent.__new__(VoiceAgent)
     agent.is_running = True
     agent._turns = asyncio.Queue(maxsize=1)
-    agent._barge_in = asyncio.Event()
     agent._said_anything = False
-    agent._active_turn_task = None
+    agent._user_speech_active = False
+    agent._active_response_task = None
+    agent._active_turn_id = None
+    agent._current_turn_id = None
+    agent._playback_turn_id = None
+    agent._browser_playback_managed = False
+    agent._playback_interrupt_callback = None
+    agent._cancel_reasons = {}
     agent._turn_id = 0
     agent.llm = FakeLLM()
-    agent.tts = type("FakeTTS", (), {"speak": lambda self, text: asyncio.sleep(0)})()
+    agent.tts = type("FakeTTS", (), {
+        "playing_turn_id": None,
+        "speak": lambda self, text, turn_id=None: asyncio.sleep(0),
+        "interrupt": lambda self: None,
+    })()
 
     responder = asyncio.create_task(agent._respond_loop())
     await agent._turns.put("first question")
     assert await asyncio.wait_for(agent.llm.started.get(), 1) == "first question"
 
-    agent._barge_in.set()
-    agent._cancel_active_turn()
+    agent._cancel_current_turn("new_utterance")
     await agent._turns.put("new question")
     assert await asyncio.wait_for(agent.llm.started.get(), 1) == "new question"
     assert agent.llm.cancelled == ["first question"]

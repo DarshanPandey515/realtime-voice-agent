@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 class StreamingTTS:
 
-    def __init__(self, echo=None, audio_callback: Optional[Callable[[bytes], None]] = None):
+    def __init__(self, echo=None, audio_callback: Optional[Callable[[bytes, int], None]] = None):
         self.client = ElevenLabs(
             api_key=tts_config.api_key
         )
@@ -32,6 +32,7 @@ class StreamingTTS:
         self._play_lock = threading.Lock()
         self._spoken = deque(maxlen=aec_config.echo_history)
         self._playback_started_at = 0.0
+        self._playing_turn_id = None
 
 
     def is_self_echo(self, text: str, now: float | None = None) -> bool:
@@ -58,14 +59,19 @@ class StreamingTTS:
             aec_config.echo_match_ratio
 
 
-    async def speak(self, text: str) -> None:
+    @property
+    def playing_turn_id(self):
+        return self._playing_turn_id
+
+
+    async def speak(self, text: str, turn_id: int | None = None) -> None:
         # Synthesis reads a blocking HTTP stream and playback blocks the
         # speaker, so neither belongs on the event loop.
         logger.info("TTS: Speaking: %s", text[:100] + "..." if len(text) > 100 else text)
-        await asyncio.to_thread(self._play_blocking, text)
+        await asyncio.to_thread(self._play_blocking, text, turn_id)
 
 
-    def _play_blocking(self, text: str) -> None:
+    def _play_blocking(self, text: str, turn_id: int | None = None) -> None:
         # Wait for any interrupted playback to tear down before opening a
         # second stream on the same device.
         with self._play_lock:
@@ -73,6 +79,7 @@ class StreamingTTS:
             # playing, so an interrupt() can no longer race this clear.
             self._cancel.clear()
             self._playback_started_at = time.monotonic()
+            self._playing_turn_id = None
             self._spoken.append(text)
 
             # Only open PyAudio if no audio callback is provided (terminal mode)
@@ -112,12 +119,14 @@ class StreamingTTS:
 
                     # Send chunk to external callback if provided (browser mode)
                     if self._audio_callback is not None:
-                        self._audio_callback(chunk)
+                        self._audio_callback(chunk, turn_id or 0)
 
                     # Play through speaker if no callback (terminal mode)
                     if stream is not None:
+                        self._playing_turn_id = turn_id
                         stream.write(chunk)
             finally:
+                self._playing_turn_id = None
                 if stream is not None:
                     stream.stop_stream()
                     stream.close()

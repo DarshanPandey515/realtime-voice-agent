@@ -21,7 +21,11 @@ logger = logging.getLogger(__name__)
 
 class VoiceAgent:
 
-    def __init__(self, audio_callback: Optional[Callable[[bytes], None]] = None):
+    def __init__(
+        self,
+        audio_callback: Optional[Callable[[bytes, int], None]] = None,
+        playback_interrupt_callback: Optional[Callable[[int], None]] = None,
+    ):
         self.echo = EchoCancellation(
             asr_config.sample_rate,
             # Playback buffer is the delay between us handing audio to the
@@ -34,23 +38,75 @@ class VoiceAgent:
         self.asr = StreamingASR()
         self.llm = LLMAgent()
         self.tts = StreamingTTS(echo=self.echo, audio_callback=audio_callback)
+        self._playback_interrupt_callback = playback_interrupt_callback
         self.is_running = False
         self._mic_error = None
         # Mic thread -> event loop. The pump drains this in the loop thread,
         # so asyncio.Queue is only ever touched from one side.
         self._frames = asyncio.Queue(maxsize=64)
         self._turns = asyncio.Queue(maxsize=1)
-        self._barge_in = asyncio.Event()
         self._vad = VoiceDetector()
         self._voice_frames = 0
+        self._user_speech_active = False
         self._said_anything = False
-        self._active_turn_task: asyncio.Task | None = None
+        self._active_response_task: asyncio.Task | None = None
+        self._active_turn_id: int | None = None
+        self._current_turn_id: int | None = None
+        self._playback_turn_id: int | None = None
+        self._browser_playback_managed = playback_interrupt_callback is not None
+        self._cancel_reasons: dict[int, str] = {}
         self._turn_id = 0
 
-    def _cancel_active_turn(self) -> None:
-        task = self._active_turn_task
-        if task is not None and not task.done():
-            task.cancel()
+    def set_playback_state(self, active: bool, turn_id: int) -> None:
+        """Record browser-confirmed playback, ignoring stale stop events."""
+        self._browser_playback_managed = True
+        if active:
+            if turn_id == 0 or turn_id == self._current_turn_id:
+                self._playback_turn_id = turn_id
+        elif self._playback_turn_id == turn_id:
+            self._playback_turn_id = None
+
+    def is_turn_current(self, turn_id: int) -> bool:
+        if turn_id == 0:
+            return self._current_turn_id is None and turn_id not in self._cancel_reasons
+        return turn_id == self._current_turn_id and turn_id not in self._cancel_reasons
+
+    def _playing_turn_id(self) -> int | None:
+        if self._browser_playback_managed:
+            return self._playback_turn_id
+        return self.tts.playing_turn_id
+
+    def _interrupt_playback(self, turn_id: int) -> None:
+        self.tts.interrupt()
+        if self._playback_interrupt_callback is not None:
+            self._playback_interrupt_callback(turn_id)
+        if self._playback_turn_id == turn_id:
+            self._playback_turn_id = None
+
+    def _cancel_current_turn(self, reason: str, only_turn_id: int | None = None) -> None:
+        turn_id = self._current_turn_id
+        if turn_id is None or (only_turn_id is not None and turn_id != only_turn_id):
+            # A greeting may be playing before the first conversational turn.
+            turn_id = self._playing_turn_id()
+            if turn_id is None and reason == "new_utterance" and self._browser_playback_managed:
+                turn_id = 0
+        if turn_id is None or (only_turn_id is not None and turn_id != only_turn_id):
+            return
+
+        playing_turn_id = self._playing_turn_id()
+        if playing_turn_id == turn_id or (
+            self._browser_playback_managed and reason == "new_utterance"
+        ):
+            self._interrupt_playback(turn_id)
+
+        task = self._active_response_task
+        if task is not None and not task.done() and self._active_turn_id == turn_id:
+            self._cancel_reasons[turn_id] = reason
+            task.cancel(reason)
+
+        # Invalidating the generation prevents late TTS chunks from a
+        # cancelled turn from being queued after the next turn starts.
+        self._cancel_reasons.setdefault(turn_id, reason)
 
     def _offer(self, data: bytes) -> None:
         try:
@@ -99,9 +155,9 @@ class VoiceAgent:
             # VAD on the *cleaned* audio. On raw input the agent's own voice
             # reads as the user talking and cuts itself off again.
             if self._is_user_speech(clean):
-                self.tts.interrupt()
-                self._barge_in.set()
-                self._cancel_active_turn()
+                playing_turn_id = self._playing_turn_id()
+                if playing_turn_id is not None:
+                    self._cancel_current_turn("vad_barge_in", only_turn_id=playing_turn_id)
             await self.asr.stream_audio(clean)
 
     def _is_user_speech(self, pcm: bytes) -> bool:
@@ -114,9 +170,15 @@ class VoiceAgent:
         probability = self._vad.process(np.frombuffer(pcm, dtype=np.int16))
         if probability < asr_config.vad_threshold:
             self._voice_frames = 0
+            self._user_speech_active = False
+            return False
+        if self._user_speech_active:
             return False
         self._voice_frames += 1
-        return self._voice_frames >= asr_config.vad_onset_frames
+        if self._voice_frames >= asr_config.vad_onset_frames:
+            self._user_speech_active = True
+            return True
+        return False
 
     async def _turn_loop(self) -> None:
         """Take finished turns and hand them to the responder.
@@ -137,25 +199,68 @@ class VoiceAgent:
                 logger.info("ignoring probable self-echo: %s", user_text)
                 continue
 
-            self.tts.interrupt()
-            self._barge_in.set()
-            self._cancel_active_turn()
+            self._cancel_current_turn("new_utterance")
             try:
                 self._turns.put_nowait(user_text)
             except asyncio.QueueFull:
                 self._turns.get_nowait()
                 self._turns.put_nowait(user_text)
 
-    async def _on_sentence(self, sentence: str) -> None:
-        if self._barge_in.is_set():
-            return
+    async def _on_sentence(self, sentence: str, turn_id: int | None = None) -> bool:
+        if turn_id is not None and (
+            turn_id != self._current_turn_id or turn_id in self._cancel_reasons
+        ):
+            return False
         # Never say "let me check that" out loud: it is a promise the model may
         # not keep, and dead air in front of a microphone reads as a hang.
         if is_intent_narration(sentence):
             logger.info("dropping intent narration: %s", sentence)
-            return
+            return False
         self._said_anything = True
-        await self.tts.speak(sentence)
+        await self.tts.speak(sentence, turn_id=turn_id)
+        return True
+
+    async def _process_turn(self, user_text: str, turn_id: int) -> None:
+        self._said_anything = False
+
+        async def on_sentence(sentence: str) -> None:
+            await self._on_sentence(sentence, turn_id)
+
+        try:
+            async with asyncio.timeout(llm_config.turn_timeout_seconds):
+                await self.llm.stream_into(user_text, on_sentence)
+        except asyncio.CancelledError:
+            raise
+        except TimeoutError:
+            logger.warning("response turn=%s exceeded %ss", turn_id, llm_config.turn_timeout_seconds)
+            if turn_id == self._current_turn_id and turn_id not in self._cancel_reasons:
+                await self.tts.speak(
+                    "I'm having trouble checking that right now. Please try again.",
+                    turn_id=turn_id,
+                )
+        except UsageLimitExceeded as e:
+            logger.warning("turn=%s hit a tool-call cap: %s", turn_id, e)
+            if turn_id == self._current_turn_id and turn_id not in self._cancel_reasons:
+                await self.tts.speak(
+                    "I went round in circles looking into that. "
+                    "Can you narrow the question down?",
+                    turn_id=turn_id,
+                )
+        except Exception as e:
+            logger.warning("reply failed turn=%s: %s", turn_id, e)
+            if turn_id == self._current_turn_id and turn_id not in self._cancel_reasons:
+                await self.tts.speak("Something went wrong. Try asking again.", turn_id=turn_id)
+        else:
+            if (
+                not self._said_anything
+                and turn_id == self._current_turn_id
+                and turn_id not in self._cancel_reasons
+            ):
+                logger.info("turn produced no answer turn=%s: %s", turn_id, user_text)
+                await self.tts.speak(
+                    "I couldn't find that. Try asking differently.",
+                    turn_id=turn_id,
+                )
 
     async def _respond_loop(self) -> None:
         while self.is_running:
@@ -167,45 +272,33 @@ class VoiceAgent:
                 logger.debug("Turn wait error: %s", e)
                 continue
 
-            self._barge_in.clear()
-            self._said_anything = False
             self._turn_id += 1
             turn_id = self._turn_id
-            task = asyncio.current_task()
-            self._active_turn_task = task
+            self._current_turn_id = turn_id
+            task = asyncio.create_task(self._process_turn(user_text, turn_id))
+            self._active_response_task = task
+            self._active_turn_id = turn_id
             logger.info("Starting response turn=%s", turn_id)
             try:
-                async with asyncio.timeout(llm_config.turn_timeout_seconds):
-                    await self.llm.stream_into(user_text, self._on_sentence)
+                await task
             except asyncio.CancelledError:
                 if not self.is_running:
                     break
-                logger.info("Cancelled stale response turn=%s", turn_id)
-                continue
-            except TimeoutError:
-                logger.warning("response turn=%s exceeded %ss", turn_id, llm_config.turn_timeout_seconds)
-                if not self._barge_in.is_set():
-                    await self.tts.speak("I'm having trouble checking that right now. Please try again.")
-            except UsageLimitExceeded as e:
-                logger.warning("turn=%s hit a tool-call cap: %s", turn_id, e)
-                if not self._barge_in.is_set():
-                    await self.tts.speak(
-                        "I went round in circles looking into that. "
-                        "Can you narrow the question down?")
-            except Exception as e:
-                logger.warning("reply failed turn=%s: %s", turn_id, e)
-                if not self._barge_in.is_set():
-                    await self.tts.speak("Something went wrong. Try asking again.")
-            else:
-                # Every sentence was narration, or the model produced nothing:
-                # either way the user is owed an answer, not a promise.
-                if not self._said_anything and not self._barge_in.is_set():
-                    logger.info("turn produced no answer turn=%s: %s", turn_id, user_text)
-                    await self.tts.speak(
-                        "I couldn't find that. Try asking differently.")
+                logger.info(
+                    "Cancelled stale response turn=%s reason=%s",
+                    turn_id,
+                    self._cancel_reasons.get(turn_id, "unknown"),
+                )
             finally:
-                if self._active_turn_task is task:
-                    self._active_turn_task = None
+                if self._active_response_task is task:
+                    self._active_response_task = None
+                    self._active_turn_id = None
+
+    def interrupt_playback(self):
+        """Stop the currently playing response and its browser audio buffers."""
+        turn_id = self._playing_turn_id()
+        if turn_id is not None:
+            self._cancel_current_turn("playback_interrupted", only_turn_id=turn_id)
 
     async def connect(self):
         """Connect to ASR."""
@@ -232,10 +325,6 @@ class VoiceAgent:
     async def disconnect(self):
         """Disconnect from ASR."""
         await self.asr.disconnect()
-
-    def interrupt_playback(self):
-        """Interrupt current TTS playback."""
-        self.tts.interrupt()
 
     async def run(self, use_mic: bool = True, speak_greeting: bool = True):
         """Run the agent with terminal defaults (mic thread and greeting)."""

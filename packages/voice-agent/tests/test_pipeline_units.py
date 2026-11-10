@@ -1082,6 +1082,8 @@ def _bare_agent():
     agent._barge_in = asyncio.Event()
     agent._vad = _FakeVAD([])
     agent._voice_frames = 0
+    agent._turn_id = 0
+    agent._active_turn_task = None
     return agent
 
 

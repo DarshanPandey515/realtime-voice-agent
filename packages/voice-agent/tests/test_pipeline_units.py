@@ -1171,3 +1171,44 @@ def test_turn_queue_drops_stale_turn():
 
     asyncio.run(run())
     assert agent.tts.interrupts >= 1
+
+@pytest.mark.asyncio
+async def test_barge_in_cancels_active_response_and_keeps_worker_available():
+    from voice_agent.main import VoiceAgent
+
+    class FakeLLM:
+        def __init__(self):
+            self.started = asyncio.Queue()
+            self.cancelled = []
+
+        async def stream_into(self, text, on_sentence):
+            self.started.put_nowait(text)
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                self.cancelled.append(text)
+                raise
+
+    agent = VoiceAgent.__new__(VoiceAgent)
+    agent.is_running = True
+    agent._turns = asyncio.Queue(maxsize=1)
+    agent._barge_in = asyncio.Event()
+    agent._said_anything = False
+    agent._active_turn_task = None
+    agent._turn_id = 0
+    agent.llm = FakeLLM()
+    agent.tts = type("FakeTTS", (), {"speak": lambda self, text: asyncio.sleep(0)})()
+
+    responder = asyncio.create_task(agent._respond_loop())
+    await agent._turns.put("first question")
+    assert await asyncio.wait_for(agent.llm.started.get(), 1) == "first question"
+
+    agent._barge_in.set()
+    agent._cancel_active_turn()
+    await agent._turns.put("new question")
+    assert await asyncio.wait_for(agent.llm.started.get(), 1) == "new question"
+    assert agent.llm.cancelled == ["first question"]
+
+    agent.is_running = False
+    responder.cancel()
+    await asyncio.gather(responder, return_exceptions=True)

@@ -75,6 +75,9 @@ class LLMConfig:
     # tool round, and tools are often issued several at once.
     tool_call_limit: int = 6
     request_limit: int = 10
+    # A conversational turn must not hold the single response worker through
+    # multiple long provider retry delays. Cancellation unwinds the active run.
+    turn_timeout_seconds: float = float(os.getenv("LLM_TURN_TIMEOUT_SECONDS", "18"))
     
 
  

@@ -44,6 +44,13 @@ class VoiceAgent:
         self._vad = VoiceDetector()
         self._voice_frames = 0
         self._said_anything = False
+        self._active_turn_task: asyncio.Task | None = None
+        self._turn_id = 0
+
+    def _cancel_active_turn(self) -> None:
+        task = self._active_turn_task
+        if task is not None and not task.done():
+            task.cancel()
 
     def _offer(self, data: bytes) -> None:
         try:
@@ -94,6 +101,7 @@ class VoiceAgent:
             if self._is_user_speech(clean):
                 self.tts.interrupt()
                 self._barge_in.set()
+                self._cancel_active_turn()
             await self.asr.stream_audio(clean)
 
     def _is_user_speech(self, pcm: bytes) -> bool:
@@ -131,6 +139,7 @@ class VoiceAgent:
 
             self.tts.interrupt()
             self._barge_in.set()
+            self._cancel_active_turn()
             try:
                 self._turns.put_nowait(user_text)
             except asyncio.QueueFull:
@@ -160,25 +169,43 @@ class VoiceAgent:
 
             self._barge_in.clear()
             self._said_anything = False
+            self._turn_id += 1
+            turn_id = self._turn_id
+            task = asyncio.current_task()
+            self._active_turn_task = task
+            logger.info("Starting response turn=%s", turn_id)
             try:
-                await self.llm.stream_into(user_text, self._on_sentence)
+                async with asyncio.timeout(llm_config.turn_timeout_seconds):
+                    await self.llm.stream_into(user_text, self._on_sentence)
             except asyncio.CancelledError:
-                break
+                if not self.is_running:
+                    break
+                logger.info("Cancelled stale response turn=%s", turn_id)
+                continue
+            except TimeoutError:
+                logger.warning("response turn=%s exceeded %ss", turn_id, llm_config.turn_timeout_seconds)
+                if not self._barge_in.is_set():
+                    await self.tts.speak("I'm having trouble checking that right now. Please try again.")
             except UsageLimitExceeded as e:
-                logger.warning("turn hit a tool-call cap: %s", e)
-                await self.tts.speak(
-                    "I went round in circles looking into that. "
-                    "Can you narrow the question down?")
+                logger.warning("turn=%s hit a tool-call cap: %s", turn_id, e)
+                if not self._barge_in.is_set():
+                    await self.tts.speak(
+                        "I went round in circles looking into that. "
+                        "Can you narrow the question down?")
             except Exception as e:
-                logger.warning("reply failed: %s", e)
-                await self.tts.speak("Something went wrong. Try asking again.")
+                logger.warning("reply failed turn=%s: %s", turn_id, e)
+                if not self._barge_in.is_set():
+                    await self.tts.speak("Something went wrong. Try asking again.")
             else:
                 # Every sentence was narration, or the model produced nothing:
                 # either way the user is owed an answer, not a promise.
-                if not self._said_anything:
-                    logger.info("turn produced no answer: %s", user_text)
+                if not self._said_anything and not self._barge_in.is_set():
+                    logger.info("turn produced no answer turn=%s: %s", turn_id, user_text)
                     await self.tts.speak(
                         "I couldn't find that. Try asking differently.")
+            finally:
+                if self._active_turn_task is task:
+                    self._active_turn_task = None
 
     async def connect(self):
         """Connect to ASR."""

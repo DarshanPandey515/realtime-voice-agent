@@ -157,7 +157,7 @@ class LLMAgent:
 
         self.agent = Agent(
             model=self.groq_agent,
-            model_settings=GroqModelSettings(groq_reasoning_effort="none"),
+            model_settings=GroqModelSettings(groq_reasoning_effort="low"),
             system_prompt=SYSTEM_PROMPT,
         )
         self.register_tools()

@@ -1212,3 +1212,36 @@ async def test_barge_in_cancels_active_response_and_keeps_worker_available():
     agent.is_running = False
     responder.cancel()
     await asyncio.gather(responder, return_exceptions=True)
+
+
+def test_llm_uses_configured_groq_model(monkeypatch):
+    import voice_agent.llm as llm_module
+
+    seen = {}
+
+    class FakeProvider:
+        def __init__(self, api_key):
+            seen["api_key"] = api_key
+
+    class FakeModel:
+        def __init__(self, model, provider):
+            seen["model"] = model
+            seen["provider"] = provider
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            pass
+
+        def tool(self, fn):
+            return fn
+
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    monkeypatch.setattr(llm_module, "GroqProvider", FakeProvider)
+    monkeypatch.setattr(llm_module, "GroqModel", FakeModel)
+    monkeypatch.setattr(llm_module, "Agent", FakeAgent)
+    monkeypatch.setattr(llm_module.llm_config, "model", "groq:openai/gpt-oss-20b")
+
+    llm_module.LLMAgent()
+
+    assert seen["model"] == "openai/gpt-oss-20b"
+    assert seen["api_key"] == "test-key"

@@ -1,4 +1,5 @@
 # llm_agent.py
+import logging
 import os
 import re
 
@@ -17,6 +18,8 @@ from pydantic_ai.models.groq import GroqModelSettings
 
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 MAX_TURNS = 6
 _SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+")
@@ -144,8 +147,10 @@ class LLMAgent:
 
     def __init__(self):
 
+        model_name = llm_config.model.removeprefix("groq:")
+        logger.info("Using Groq model %s", model_name)
         self.groq_agent = GroqModel(
-            "qwen/qwen3.8-27b",
+            model_name,
             provider=GroqProvider(api_key=os.environ["GROQ_API_KEY"])
         )
 

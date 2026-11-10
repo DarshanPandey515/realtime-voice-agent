@@ -16,6 +16,7 @@ class ASRConfig:
     input_device_index: int = int(os.getenv("INPUT_DEVICE_INDEX", "-1"))
     # Language code for transcription (e.g., "en" for English, "es" for Spanish)
     language_code: str = os.getenv("ASR_LANGUAGE_CODE", "en")
+    endpointing_ms: int = int(os.getenv("ASR_ENDPOINTING_MS", "300"))
     # Barge-in gate. Speech probability above the threshold for this many
     # consecutive frames stops playback, without waiting for ASR to close a
     # turn.

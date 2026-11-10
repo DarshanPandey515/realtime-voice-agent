@@ -34,18 +34,27 @@ class StreamingASR:
         # maxsize=1, drop-oldest: someone talking over the agent should get
         # their newest turn answered, not a backlog of stale ones.
         self.turn_queue = asyncio.Queue(maxsize=1)
+        self._transcript_segments: list[str] = []
+        self.on_utterance = None
         self.is_running = False
         self._connected = asyncio.Event()
 
     async def on_message(self, message: ListenV1SocketClientResponse, *args, **kwargs) -> None:
         if isinstance(message, ListenV1Results):
             if message.channel and message.channel.alternatives:
-                transcript = message.channel.alternatives[0].transcript
+                transcript = message.channel.alternatives[0].transcript.strip()
                 if transcript and message.is_final:
-                    logger.info("user: %s", transcript)
+                    self._transcript_segments.append(transcript)
+            if getattr(message, "speech_final", False):
+                utterance = " ".join(self._transcript_segments).strip()
+                self._transcript_segments.clear()
+                if utterance:
+                    logger.info("user: %s", utterance)
                     if self.turn_queue.full():
                         self.turn_queue.get_nowait()
-                    await self.turn_queue.put(transcript)
+                    await self.turn_queue.put(utterance)
+                    if self.on_utterance is not None:
+                        await self.on_utterance(utterance)
         elif isinstance(message, ListenV1UtteranceEnd):
             logger.debug("Utterance ended")
         elif isinstance(message, ListenV1SpeechStarted):
@@ -74,6 +83,7 @@ class StreamingASR:
                 language=asr_config.language_code,
                 smart_format=True,
                 interim_results=False,
+                endpointing=asr_config.endpointing_ms,
                 vad_events=True,
                 sample_rate=asr_config.sample_rate,
                 channels=1,
